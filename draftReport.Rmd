@@ -55,6 +55,239 @@ This dataset includes data about the products sold by Olist.
 Data set: https://www.kaggle.com/olistbr/brazilian-ecommerce
 
 # Analysis
+
+Product Quality: (Let's see if we can find this)
+
+Trying to identify the products categories that are more prone to customer insatisfaction. Some things come to mind
+- categories with more poorly rated products? data set--> order_reviews_dataset
+- categories which tend to be delivered late? data set-->
+- expensive products maybe? do not get value for money?
+- bulky products maybe?
+- some categories maybe limited to few sellers and they may not be selling good products?
+
+
+Likely classification problem that you select category and given paramters should it come undder customer satisfaction or not.
+Anything less than 3 is unsatisfied
+3 or more is satisfied
+
+but for same product you may have some people satisfied and some as not. 
+( I think that's where knn and related algorithms were introduced, to find mean of the points)
+
+Would be good clustering project but may not be ideal as it based on unsupervised learning and its  coverage was limited.
+
+Maybe it would be wiser to look at sales or delivery times problems.
+
+
+
+Clustering:
+
+So given order of an item, delivery time, product etc  can we try to predict customer rating. But will be so miliar to movielens project can become boring
+
+
+
+Delivery Performance:
+
+You will also be able to work through delivery performance and find ways to optimize delivery times.
+
+Let's predict delivery time/date
+-- delivery distance
+-- location of customer as some can be remotely connected and need special delivery merchanism. This is independent of delivery distance.
+-- location of seller as shipping from some locations maybe difficult. This is independent of delivery distance.
+-- size of product? 
+-- price of product (expensive nature of product as it could mean extra care or it maybe fragile?)
+-- purchase time....if in night, delivery time maybe longer
+-- order approved at time-> if payment approval came multiple hours after purchase time, this maybe longer
+-- product category -- products of same category may show similar behavior.
+-- or specific product - some products may have higher delivery time.
+-- deliveries maybe impacted due to sales, festival season.
+
+we should consider if we need time stamp or we can take purchase time as 0 and calculated approved at from it. though we may lose granularity in terms of time as truck may come everyday at 4. so after 4 you can ship , before 4 you cant
+
+
+estimated delivery date is present in ---> order_estimated_delivery_date
+We can calculate RMSE using that and it will be our benchmark
+
+We can see if we improved than that or not. It will give us indication of how close are we to the production model RMSE.
+
+
+
+
+
+
+```{r Install or load packages}
+# TODO use conditional loading or installation of library
+library(dplyr)
+library(lubridate)
+library(tidyverse)
+install.packages("geosphere")
+library(geosphere)
+```
+
+```{r Basic analysis}
+
+products_dataset <- read.csv(file.path('data','olist_products_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(product_category_name = as.factor(product_category_name))
+
+products_dataset %>% head()
+products_dataset %>% str()
+
+
+order_reviews_dataset <- read.csv(file.path('data','olist_order_reviews_dataset.csv'),header=TRUE,stringsAsFactors = FALSE)
+
+order_reviews_dataset %>% head()
+order_reviews_dataset %>% str()
+
+# customers data set  with zip code prefix and can be used to uniquely identify a customer
+# customer_id ----> key to the orders dataset. Each order has a unique customer_id.
+# customer_zip_code_prefix --> first five digits of customer zip code
+customers_dataset <- read.csv(file.path('data','olist_customers_dataset.csv'),header=TRUE) %>% mutate(customer_zip_code_prefix=as.factor(customer_zip_code_prefix),customer_id=as.character(customer_id ))
+
+customers_dataset %>% head()
+customers_dataset %>% str()
+
+
+# geo location details
+# in brazil while 5 digits zip code is good enough to identify state, it may not be correct to identify city
+# it can have geolocation_zip_code_prefix shared across multiple places
+# refer: https://codigo-postal.org/en-us/brazil/
+# The Postal Code Address (CEP) is an eight-digit number set that has by main objective to guide and accelerate the distribution of objects sent through the national mail in Brazil. The current structure of the Brazilian postal code is 8 (eight) digits, divided into two parts:
+
+# first part composed of 5 digits where each digit represents the 1) region, 2) sub-region, 3) sector, 4) subsector, 5) subsector divider;
+# the second part is composed of 3 digits, separated by a hyphen from the first part and represents the Distribution Identifiers.
+# You can navigate through states, then cities and finally neighborhoods and streets until you find the corresponding postal code.
+
+
+geolocation_dataset <- read.csv(file.path('data','olist_geolocation_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) 
+
+geolocation_dataset %>% head()
+geolocation_dataset %>% str()
+
+
+# Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
+# intially we can see 
+geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
+
+# post transformation to resolve any Accent or special characters from the city name
+geolocation_dataset <- geolocation_dataset %>% mutate(geolocation_city=stri_trans_general(geolocation_city,"Any-ASCII"))
+
+
+geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
+
+# as each geolocation_zip_code_prefix can have many data points, we will limit these to one by taking mean for lat, long location
+geolocation_dataset <- geolocation_dataset %>% group_by(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% summarise(geolocation_lat=mean(geolocation_lat),geolocation_lng=mean(geolocation_lng)) %>% ungroup()
+
+# TODO review it
+#%>% mutate(geolocation_state=as.factor(geolocation_state)) 
+# TODO review if geolocation_zip_code_prefix and geolocation_city can have multiple states with them.
+
+# remove whitespace before and after reduces one city
+# still issues are there and can be seen by
+zip_codes_of_interest <- geolocation_dataset %>% mutate(geolocation_city=str_trim(geolocation_city)) %>% dplyr::count(geolocation_zip_code_prefix) %>% filter(n>1)  %>% pull(geolocation_zip_code_prefix)
+
+geolocation_dataset %>% filter(geolocation_zip_code_prefix %in% zip_codes_of_interest) %>% view()
+# to filter out duplicates
+# we need not worry about city or state, we can pick any as long as lat, lng values are similar
+
+
+
+
+# seller data set with zip code prefix
+# seller_zip_code_prefix --> first 5 digits of seller zip code
+sellers_dataset <- read.csv(file.path('data','olist_sellers_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) 
+# TODO review if we need it
+# %>% mutate(seller_zip_code_prefix=as.factor(seller_zip_code_prefix),seller_id=as.character(seller_id ))
+
+sellers_dataset %>% head()
+sellers_dataset %>% str()
+
+# Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
+# These all need to be handled in data wrangling
+
+sellers_dataset %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% str()
+
+# TODO there seems to be an issue
+sellers_dataset %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% dplyr::count(seller_id) %>% slice_max(order_by=n,n=5)
+
+# geolocation_dataset seems to have 4 entries for same zip code . example 13454
+
+# we tried another approach by joining over all zip codee, city and state but it led to no match
+sellers_dataset %>% mutate(seller_city=stri_trans_general(seller_city,"Any-ASCII")) %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix','seller_city'='geolocation_city','seller_state'='geolocation_state')) %>% str()
+# TODO -- if we analyse we can see city and state for seller data differ in both datasets. so best to stick to zip code. city and state are prone to errors.
+# we used anti join to identify ones not matching.
+
+
+
+sellers_dataset %>% anti_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) 
+
+
+# order data set with various delivery related times
+# note each customer_id is unique per order
+# order_purchase_timestamp -> Shows the purchase timestamp.
+# order_approved_at/payment_approved_at -> Shows the payment approval timestamp.
+# order_delivered_carrier_date/handed_over_to_carrier_date -> Shows the order posting timestamp. When it was handled to the logistic partner.
+# order_delivered_customer_date --> Shows the actual order delivery date to the customer.
+# order_estimated_delivery_date --> Shows the estimated delivery date that was informed to customer at the purchase moment.
+orders_dataset <- read.csv(file.path('data','olist_orders_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% rename(payment_approved_at=order_approved_at,handed_over_to_carrier_date=order_delivered_carrier_date)  %>% mutate(order_status=as.factor(order_status),order_purchase_timestamp=as_datetime(order_purchase_timestamp),payment_approved_at=as_datetime(payment_approved_at),handed_over_to_carrier_date=as_datetime(handed_over_to_carrier_date),order_delivered_customer_date=as_datetime(order_delivered_customer_date),order_estimated_delivery_date=as_datetime(order_estimated_delivery_date))
+
+orders_dataset <- orders_dataset %>% filter(order_status=='delivered') %>% filter( !is.na(order_estimated_delivery_date ) & !is.na(order_delivered_customer_date ) )
+
+orders_dataset %>% head()
+orders_dataset %>% str()
+
+# current RMSE for predicted delivery time given by order_estimated_delivery_date vs actual outcome give by order_delivered_customer_date
+# However, note that order_estimated_delivery_date has no timestamp, so we will remove timestamp component, round date using floor_date, which means any delivery done during the day say at 2017-10-10 21:25:13 is treated to be done on 2017-10-10
+
+# first we convert it to desired date
+# then we covert date to numeric i.e. to convert it to seconds
+orders_dataset %>% mutate(order_delivered_customer_date=floor_date(order_delivered_customer_date)) %>% mutate(order_delivered_customer_date=as.numeric(order_delivered_customer_date),order_estimated_delivery_date=as.numeric(order_estimated_delivery_date))  %>% head()
+
+# then we calculate time_taken_from_order_to_delivery, estimated_time_from_order_to_delivery in seconds
+
+orders_dataset %>% head() %>% mutate(order_delivered_customer_date=floor_date(order_delivered_customer_date),order_purchase_timestamp=as.numeric(order_purchase_timestamp)) %>%  mutate(time_taken_from_order_to_delivery=as.numeric(order_delivered_customer_date)-order_purchase_timestamp, estimated_time_from_order_to_delivery = as.numeric(order_estimated_delivery_date) -order_purchase_timestamp) %>% str()
+
+orders_dataset %>% mutate(order_delivered_customer_date=floor_date(order_delivered_customer_date,unit="day"),order_purchase_timestamp=as.numeric(order_purchase_timestamp)) %>%  mutate(time_taken_from_order_to_delivery=as.numeric(order_delivered_customer_date)-order_purchase_timestamp, estimated_time_from_order_to_delivery = as.numeric(order_estimated_delivery_date) -order_purchase_timestamp,diff=estimated_time_from_order_to_delivery-time_taken_from_order_to_delivery)
+
+# if we look at graph we can  see there is huge difference between estimate data and actual delivery date
+# are these different readings or mode of transport is different? 
+p1 <- orders_dataset %>% mutate(order_delivered_customer_date=floor_date(order_delivered_customer_date,unit="day"),order_purchase_timestamp=as.numeric(order_purchase_timestamp)) %>%  mutate(time_taken_from_order_to_delivery=as.numeric(order_delivered_customer_date)-order_purchase_timestamp, estimated_time_from_order_to_delivery = as.numeric(order_estimated_delivery_date) -order_purchase_timestamp,diff=estimated_time_from_order_to_delivery-time_taken_from_order_to_delivery) %>% ggplot(aes(diff)) + geom_histogram(binwidth=86400*15) 
+
+library(plotly)
+ggplotly(p1)
+
+
+
+
+# orders data with item related seller info
+# order_item_id --->sequential number identifying number of items included in the same order.
+# so if there are three items they will be nuber 1 , 2, 3 for the given order
+# seller_limit_date ---> Shows the seller shipping limit date for handling the order over to the logistic partner.
+# freight_value --> item freight value item (if an order has more than one item the freight value is splitted between items)
+order_items_dataset <- read.csv(file.path('data','olist_order_items_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(order_id=as.factor(order_id),product_id=as.factor(product_id),seller_id=as.factor(seller_id))
+
+order_items_dataset %>% str()
+order_items_dataset %>% head()
+
+
+
+# we can combine orders delivery information (orders_dataset) with orders items and seller related info (order_items_dataset)
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% head()
+
+# let's combine with seller details
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% head()
+
+# let's combine with unique customer and its location dataset
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head()
+
+
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head() %>% mutate(distance_between_two_points=round(distGeo(c(-80,40),c(-81,41))/1000,2))
+
+# we will use distGeo from geosphere package to compute distance in km between seller and customer. considered to be highly accurate. if it takes more time, we can consider using distVincentyEllipsoid or distHaversine as we are fine with accuracy of a km.
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head(2) %>% mutate(seller_zip_code_prefix=as.numeric(seller_zip_code_prefix)) %>% select('seller_zip_code_prefix') %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_seller=geolocation_lat,geolocation_lng_seller=geolocation_lng)
+
+
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head(5) %>% mutate(seller_zip_code_prefix=as.numeric(seller_zip_code_prefix)) %>% mutate(customer_zip_code_prefix=as.numeric(customer_zip_code_prefix)) %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_seller=geolocation_lat,geolocation_lng_seller=geolocation_lng) %>% select(customer_zip_code_prefix) %>% inner_join(geolocation_dataset,by=c('customer_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_customer=geolocation_lat,geolocation_lng_customer=geolocation_lng)
+
+```
+
 # Results
 # Conclusion
 
