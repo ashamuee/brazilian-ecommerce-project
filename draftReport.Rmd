@@ -86,6 +86,7 @@ if (!require('lubridate')) install.packages('lubridate'); library('lubridate')
 if (!require('tidyverse')) install.packages('tidyverse'); library('tidyverse')
 if (!require('geosphere')) install.packages('geosphere'); library('geosphere')
 if (!require('caret')) install.packages('caret'); library('caret')
+if (!require('randomForest')) install.packages('randomForest'); library('randomForest')
 if (!require('plotly')) install.packages('plotly'); library('plotly')
 if (!require('gam')) install.packages('gam'); library('gam')
 ```
@@ -303,44 +304,173 @@ orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(
 orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head()
 
 # let's combine with products data as well
-orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% inner_join(products_dataset,by='product_id') %>% select(-customer_id) %>% head()
-
-# seller to customer distance should be right predictor to consider, as the text says "Those merchants are able to sell their products through the Olist Store and ship them directly to the customers using Olist logistics partners."
-# source: https://www.kaggle.com/olistbr/brazilian-ecommerce
-# we will use distGeo from geosphere package to compute distance in km between seller and customer. considered to be highly accurate. if it takes more time, we can consider using distVincentyEllipsoid or distHaversine as we are fine with accuracy of a km.
-orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>%  inner_join(products_dataset,by='product_id') %>% select(-customer_id) %>% head() %>% mutate(distance_between_two_points=round(distGeo(matrix(c(geolocation_lng_seller,geolocation_lat_seller),ncol=2),matrix(c(geolocation_lng_customer,geolocation_lat_customer),ncol=2))/1000,2))
-
+orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% inner_join(products_dataset,by='product_id') %>% select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-customer_state) %>% head()
 
 # so raw data
-raw_data <- orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% inner_join(products_dataset,by='product_id') %>%  mutate(distance_between_two_points=round(distGeo(matrix(c(geolocation_lng_seller,geolocation_lat_seller),ncol=2),matrix(c(geolocation_lng_customer,geolocation_lat_customer),ncol=2))/1000,2)) %>% select(-geolocation_lat_customer,-geolocation_lng_customer,-geolocation_lat_seller,-geolocation_lng_seller,-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-customer_state) 
+raw_data <- orders_dataset %>% 
+  inner_join(order_items_dataset,by='order_id') %>%
+  inner_join(sellers_dataset,by='seller_id') %>% 
+  inner_join(customers_dataset,by='customer_id') %>%  
+  inner_join(products_dataset,by='product_id') %>%
+  mutate(order_purchase_timestamp=as.numeric(order_purchase_timestamp),
+         product_id=as.factor(product_id), 
+         seller_id=as.factor(seller_id),
+         seller_zip_code_prefix=as.factor(seller_zip_code_prefix),
+         customer_unique_id=as.factor(customer_unique_id),
+         customer_zip_code_prefix=as.factor(customer_zip_code_prefix),
+         product_category_name=as.factor(product_category_name)) %>%
+  select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-customer_state, -payment_approved_at,-order_id, -order_item_id, -product_id,-seller_zip_code_prefix,-customer_unique_id,-customer_zip_code_prefix)
+```
 
-p1 <- raw_data %>% ggplot(aes(distance_between_two_points)) + geom_histogram(binwidth=50)
+
+Calculating current RMSE range
+```{r Current RMSE, echo = FALSE}
+# current RMSE can be calculated by finding number of hours for predicted delivery time given by order_estimated_delivery_date vs actual outcome/number of hours give by order_delivered_customer_date
+# However, note that order_estimated_delivery_date has no timestamp, so we will remove timestamp component, round date using floor_date, which means any delivery done during the day say at 2017-10-10 21:25:13 is treated to be done on 2017-10-10
+
+# first we convert it to desired date
+# then we covert date to numeric i.e. to convert it to seconds
+# then we calculate time_taken_from_order_to_delivery, estimated_time_from_order_to_delivery in seconds
+data_for_rmse <- raw_data %>%
+  select(order_purchase_timestamp,order_delivered_customer_date,order_estimated_delivery_date) %>%
+  mutate(order_delivered_customer_date_low=floor_date(order_delivered_customer_date,unit="day"),
+         order_delivered_customer_date_high=ceiling_date(order_delivered_customer_date,unit="day")) %>% 
+  mutate(order_delivered_customer_date_low=as.numeric(order_delivered_customer_date_low),
+         order_delivered_customer_date_high=as.numeric(order_delivered_customer_date_high),
+         order_estimated_delivery_date=as.numeric(order_estimated_delivery_date))  %>%
+  mutate(time_taken_from_order_to_delivery_rangemax=order_delivered_customer_date_high-order_purchase_timestamp,
+         time_taken_from_order_to_delivery_rangemin=order_delivered_customer_date_low-order_purchase_timestamp,
+         estimated_time_from_order_to_delivery=order_estimated_delivery_date-order_purchase_timestamp) %>% 
+  mutate(estimated_time_from_order_to_delivery=estimated_time_from_order_to_delivery/3600,
+         time_taken_from_order_to_delivery_rangemax = time_taken_from_order_to_delivery_rangemax/3600,
+         time_taken_from_order_to_delivery_rangemin = time_taken_from_order_to_delivery_rangemin/3600) %>%
+  select(estimated_time_from_order_to_delivery,time_taken_from_order_to_delivery_rangemax,time_taken_from_order_to_delivery_rangemin)
+
+
+RMSE_value_based_on_max <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemax,data_for_rmse$estimated_time_from_order_to_delivery)
+# 359.9466
+
+RMSE_value_based_on_min <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemin,data_for_rmse$estimated_time_from_order_to_delivery)
+# 377.9515
+
+# if we look at graph we can  see there is huge difference between estimate data and actual delivery date
+# it is possible some products are bulky or require differen mode of transport like ship 
+p1 <- data_for_rmse %>% mutate(diff=estimated_time_from_order_to_delivery-1/2*(time_taken_from_order_to_delivery_rangemax+time_taken_from_order_to_delivery_rangemin)) %>% ggplot(aes(diff)) + geom_histogram(binwidth = 24*2) + xlab('Estimation error where each bar represents 2 days')
+
+library(plotly)
 ggplotly(p1)
 
-# TODO we maybe able to remove this as it is not used, because this is the info which is generally not available
-# identify if there was delay in delivery to carrier
-raw_data <- raw_data %>% mutate(delayed_to_carrier=if_else((as.numeric(handed_over_to_carrier_date)-as.numeric(shipping_limit_date))>0,TRUE,FALSE))
+rm(data_for_rmse)
+```
 
-wrangled_data <- raw_data %>% select(-shipping_limit_date,-handed_over_to_carrier_date,-payment_approved_at,-order_id,-order_estimated_delivery_date,-order_item_id,-delayed_to_carrier) %>% mutate(order_purchase_timestamp=as.numeric(order_purchase_timestamp),order_delivered_customer_date=as.numeric(order_delivered_customer_date),product_id=as.factor(product_id),seller_id=as.factor(seller_id),seller_zip_code_prefix=as.factor(seller_zip_code_prefix),customer_unique_id=as.factor(customer_unique_id),customer_zip_code_prefix=as.factor(customer_zip_code_prefix),product_category_name=as.factor(product_category_name))
 
+
+
+```{r Prepare final wrangled data set, echo=FALSE}
 # we will predict number of hours to deliver based on various predictors. This seems more appropriate. Though as a result of this, we won't be able to use night, day time data of purchase which may influence delivery time (say to carrier it is informed only next day)
-wrangled_data <- wrangled_data %>% mutate(number_of_hours=(order_delivered_customer_date-order_purchase_timestamp)/3600) %>% select(-order_delivered_customer_date,-order_purchase_timestamp) 
+wrangled_data <- raw_data %>%
+  mutate(order_delivered_customer_date=as.numeric(order_delivered_customer_date)) %>%
+  mutate(number_of_hours=(order_delivered_customer_date-order_purchase_timestamp)/3600) %>%
+  select(-order_purchase_timestamp,-order_delivered_customer_date,-order_estimated_delivery_date)
+```
+
+```{r Apply one hot encoding to product_category_name, include = FALSE}
+set.seed(1,sample.kind = 'Rounding')
+# fullRank parameter to make sure there is no perfect collinearity
+product_category_dummyvars <- data.frame(predict(dummyVars(~product_category_name, data=wrangled_data, fullRank = TRUE), newdata = wrangled_data))
+
+wrangled_data <- wrangled_data %>% cbind.data.frame(product_category_dummyvars) %>% select(-product_category_name)
+
+wrangled_data %>% str()
+rm(product_category_dummyvars)
 ```
 
 ```{r Final wrangled data,echo=FALSE}
 wrangled_data %>% head()
 ```
 
+
 ```{r Cleanup and save required dataset}
 save(wrangled_data,file='rda/wrangled_data.rda')
-rm(geolocation_dataset, order_items_dataset, orders_dataset, p1, product_category_name_translation, products_dataset, sellers_dataset, sellers_to_ignore, customers_dataset, customers_to_ignore)
+rm(geolocation_dataset, order_items_dataset, orders_dataset, p1, product_category_name_translation, products_dataset, sellers_dataset, sellers_to_ignore, customers_dataset, customers_to_ignore, raw_data)
 ```
+
+
+Derived data set should be generated later on observations
+- geolocation usage to capture distance
+- delay and mean delay in handling to carrier
+- number of hours for delivery should be generated later
+```{r Method to derive distance data, include = FALSE}
+# we will use distGeo from geosphere package to compute distance in km between seller and customer. considered to be highly accurate. if it takes more time, we can consider using distVincentyEllipsoid or distHaversine as we are fine with accuracy of a km.
+extract_distance_between_seller_customer <- function(df) { 
+  df %>% mutate(distance_between_two_points=round(distGeo(
+    matrix(c(geolocation_lng_seller,geolocation_lat_seller),ncol=2),
+    matrix(c(geolocation_lng_customer,geolocation_lat_customer),ncol=2)
+    )/1000,2
+    )) %>% select(-geolocation_lat_customer,-geolocation_lng_customer,-geolocation_lat_seller,-geolocation_lng_seller)
+}
+```
+
+
+```{r Method to derive delay in handover to carrier, include = FALSE}
+# calculated in hours
+get_delay_in_handover_to_carrier_per_seller_id <- function(df) {
+  df %>% mutate(delay= (as.numeric(handed_over_to_carrier_date) -as.numeric(shipping_limit_date))/3600)  %>% 
+    group_by(seller_id) %>% 
+    summarise(mean_penalty_to_consider=mean(delay))
+}
+```
+
+```{r Method to compute volume from available fields, include = FALSE}
+# compute volume
+compute_volume_using_product_info <- function(df) {
+  df %>% mutate(volume=product_length_cm*product_height_cm*product_width_cm) %>%
+    select(-product_length_cm,-product_height_cm,-product_width_cm)
+}
+```
+
+Split data into training and validation set, where validation set will be used later
+```{r Split data into training and validation set, include = FALSE}
+set.seed(1,sample.kind = 'Rounding')
+test_indices <- createDataPartition(wrangled_data$number_of_hours,times=1,p=0.2,list=FALSE)
+
+training_dataset <- wrangled_data[-test_indices,]
+validation_dataset <- wrangled_data[test_indices,]
+
+# ensure validation_dataset has products only for concerned product categories and seller_ids which are in training_dataset 
+# validation_dataset <- validation_dataset %>% semi_join(training_dataset,by='product_category_name') %>% semi_join(training_dataset,by='seller_id')
+validation_dataset <- validation_dataset %>% semi_join(training_dataset,by='seller_id')
+
+rm(test_indices)
+```
+
+
+We use training_dataset and split into into train and test set. So that training_dataset is sufficient to fine tune the model
+```{r Split data for training, include=FALSE}
+# Let's split training_dataset into two parts
+set.seed(1,sample.kind = 'Rounding')
+training_dataset <- training_dataset %>% compute_volume_using_product_info() %>% extract_distance_between_seller_customer()
+
+test_indices <- createDataPartition(training_dataset$number_of_hours,times=1,p=0.2,list=FALSE)
+
+train_subset <- training_dataset[-test_indices,]
+test_subset <- training_dataset[test_indices,]
+# ensure test_subset has products only for concerned product categories and seller_ids which are in train_subset
+# test_subset <- test_subset %>% semi_join(train_subset,by='product_category_name') %>% semi_join(train_subset,by='seller_id')
+test_subset <- test_subset %>% semi_join(train_subset,by='seller_id')
+
+penalty_data <- train_subset %>% get_delay_in_handover_to_carrier_per_seller_id()
+
+rm(test_indices)
+```
+
 
 
 ## Explore product_category_name relation with number_of_hours
 
 ```{r Explore product_category_name relation with number_of_hours, echo=FALSE}
-wrangled_data %>% group_by(product_category_name) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(product_category_name=reorder(product_category_name,mean)) %>% ggplot(aes(x=product_category_name,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+# TODO review it, fix it as required
+training_dataset %>% group_by(product_category_name) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(product_category_name=reorder(product_category_name,mean)) %>% ggplot(aes(x=product_category_name,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
 ```
 
 We can see that number_of_hours of delivery varies as number product category changes
@@ -350,14 +480,14 @@ We can see that number_of_hours of delivery varies as number product category ch
 
 ```{r Explore price relation with number_of_hours, echo = FALSE}
 # first let see how are the items associated with orders priced. Most of the order items a
-wrangled_data %>% mutate(price_group=round(price/100)+1) %>% ggplot(aes(price_group)) + geom_histogram(binwidth=1) + xlab('Each price_group is of 100 units each')
+training_dataset %>% mutate(price_group=round(price/100)+1) %>% ggplot(aes(price_group)) + geom_histogram(binwidth=1) + xlab('Each price_group is of 100 units each')
 
 
 # let's plot errorbar for number of hours vs price_group.
 # we can see while for price groups number of hours for delivery vary but the relationship is not clear enough. Higher priced items can also be delivered early
-wrangled_data %>% mutate(price_group=round(price/50)+1) %>% mutate(price_group=as.factor(price_group)) %>% group_by(price_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=price_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+training_dataset %>% mutate(price_group=round(price/50)+1) %>% mutate(price_group=as.factor(price_group)) %>% group_by(price_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=price_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
 
-cor(wrangled_data$price,wrangled_data$number_of_hours)
+cor(training_dataset$price,training_dataset$number_of_hours)
 ```
 
 Price Group for a product does not give any clear indication. It does not seem to be impacting delivery time of product.
@@ -367,9 +497,9 @@ Price Group for a product does not give any clear indication. It does not seem t
 ```{r Explore distance relationship between two points with number_of_hours, echo = FALSE}
 # let's plot errorbar for number of hours vs distance group
 # we can see a pattern that as distance increases delivery time increases. 
-wrangled_data %>% mutate(distance_group=round(distance_between_two_points/50)+1) %>% mutate(distance_group=as.factor(distance_group)) %>% group_by(distance_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=distance_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+training_dataset %>% mutate(distance_group=round(distance_between_two_points/50)+1) %>% mutate(distance_group=as.factor(distance_group)) %>% group_by(distance_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=distance_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
 
-cor(wrangled_data$distance_between_two_points,wrangled_data$number_of_hours)
+cor(training_dataset$distance_between_two_points,training_dataset$number_of_hours)
 ```
 
 Distance Group can be seen to influence delivery time.
@@ -377,16 +507,282 @@ Distance Group can be seen to influence delivery time.
 
 ```{r Explore freight value group with number_of_hours}
 # let's plot errorbar for number of hours vs freight value group
-wrangled_data %>% mutate(freight_value_group=round(freight_value/5)+1) %>% mutate(freight_value_group=as.factor(freight_value_group)) %>% group_by(freight_value_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=freight_value_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+training_dataset %>% mutate(freight_value_group=round(freight_value/5)+1) %>% mutate(freight_value_group=as.factor(freight_value_group)) %>% group_by(freight_value_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=freight_value_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
 
-cor(wrangled_data$freight_value,wrangled_data$number_of_hours)
+cor(training_dataset$freight_value,training_dataset$number_of_hours)
 ```
 
 Above graphs indicates that for freight value group where each group represents 5 units, as freight value increases, number of hours for delivery increases.
 
 However, it dips near the end
 ```{r smooth fit for freight value, echo=FALSE}
-wrangled_data %>% ggplot(aes(x=freight_value,y=number_of_hours)) + geom_smooth() 
+training_dataset %>% ggplot(aes(x=freight_value,y=number_of_hours)) + geom_smooth() 
+```
+
+
+## Explore volume of product group with number_of_hours
+
+```{r Explore volume of product group with number_of_hours, echo=FALSE}
+# let's plot errorbar for number of hours vs volume of product group
+training_dataset %>% mutate(volume_group=round(volume/1000)+1) %>% mutate(volume_group=as.factor(volume_group)) %>% group_by(volume_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=volume_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+```
+It does not influencee much the number of hours
+
+However a smooth fit shows some pattern 
+```{r smooth fit for volume, echo=FALSE}
+training_dataset %>% ggplot(aes(volume,number_of_hours)) + geom_smooth()
+```
+
+## Explore weight of product with number_of_hours
+
+```{r Explore weight of product with number_of_hours}
+# let's plot errorbar for number of hours vs weight of product
+training_dataset %>% mutate(weight_group=round((product_weight_g)/1000)+1) %>% mutate(weight_group=as.factor(weight_group)) %>% mutate(weight_group=as.factor(weight_group)) %>% group_by(weight_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=weight_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+```
+Some clues but not strongly correlated.
+
+```{r Smooth fit for product, echo= FALSE}
+training_dataset  %>% ggplot(aes(product_weight_g,number_of_hours)) + geom_smooth()
+```
+
+
+```{r Prepare training and test data for ,include=FALSE}
+# penalty_data is computed on train_subset and is used with test_subset as historical learning of efficiency of each seller in delivering to carrier
+train_subset <- train_subset %>% left_join(penalty_data,by='seller_id') %>% select(-handed_over_to_carrier_date, -shipping_limit_date, -seller_id)
+
+test_subset <- test_subset %>% left_join(penalty_data,by='seller_id') %>% select(-handed_over_to_carrier_date, -shipping_limit_date, -seller_id)
+```
+
+
+```{r knn model, echo = FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+
+tuningControl=trainControl(method = "cv", number = 3, p = .8)
+knn_fit <- train(number_of_hours~., train_subset, method='knn',tuneGrid=data.frame(k=c(27,34,41)),trControl=tuningControl)
+
+knn_fit
+
+predictions <- predict(knn_fit,test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
+#199.448 for k=34
+
+save(knn_fit,file='rda/knn_model.rda')
+```
+
+
+```{r knn model data scaline under test, echo=FALSE}
+# TODO review and improve or remove this as required
+set.seed(seed=1,sample.kind = 'Rounding')
+scaled_train_subset <- train_subset %>% mutate(across(c(mean_penalty_to_consider,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
+scaled_test_subset <- test_subset %>% mutate(across(c(mean_penalty_to_consider,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
+
+
+tuningControl=trainControl(method = "cv", number = 3, p = .8)
+knn_fit <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(27,34,41)),trControl=tuningControl)
+
+knn_fit
+
+predictions <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
+#194.8233 for k=34
+
+save(knn_fit,file='rda/knn_model.rda')
+```
+
+
+
+Random forest
+However, it is important to know your data and keep in mind that a Random Forest can’t extrapolate. It can only make a prediction that is an average of previously observed labels. In this sense it is very similar to KNN.
+In other words, in a regression problem, the range of predictions a Random Forest can make is bound by the highest and lowest labels in the training data. This behavior becomes problematic in situations where the training and prediction inputs differ in their range and/or distributions. This is called covariate shift and it is difficult for most models to handle but especially for Random Forest, because it can’t extrapolate.
+From : https://towardsdatascience.com/a-limitation-of-random-forest-regression-db8ed7419e9f
+
+```{r rf model, echo = FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+tuningControl=trainControl(method = "cv", number = 2, p = .8)
+rf_fit <- train(number_of_hours~., train_subset, method='rf',tuneGrid = data.frame(mtry = seq(5, 50, 10)),trControl=tuningControl,ntree=250) # nodesize = 50,maxnodes=2000,ntree=200
+
+rf_fit
+
+predictions <- predict(rf_fit,test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
+# 184.1709 for mtry 15. Technically there are total of 79 variables due to 73 product categories and 6 other predictors
+
+save(rf_fit,file='rda/rf_model.rda')
+```
+
+
+```{r Gam model, echo = FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+tuningControl=trainControl(method = "cv", number =2, p = .8)
+gam_fit <- train(number_of_hours~., train_subset, method='gam',trControl=tuningControl) # check for tuning parameters
+
+gam_fit
+
+predictions <- predict(gam_fit,test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
+# 195.3235
+
+save(gam_fit,file='rda/gam_model.rda')
+```
+
+
+```{r Glm model}
+# Let's try with glm model
+set.seed(seed=1,sample.kind = 'Rounding')
+tuningControl=trainControl(method = "cv", number = 2, p = .8)
+glm_fit <- train(number_of_hours~., train_subset, method='glm',trControl=tuningControl)
+
+glm_fit
+
+predictions <- predict(glm_fit, test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
+# 198.8575 (improves if we use seller_id as predictor as well)
+```
+Warning:
+prediction from a rank-deficient fit may be misleading
+
+```{r GamLoess model, echo = FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+tuningControl=trainControl(method = "cv", number = 3, p = .8)
+#grid <- expand.grid(span = seq(0.15, 0.65, len = 10), degree = 1)
+grid <- expand.grid(span = seq(0.15, 0.65, len = 3), degree = 1)
+gamLoess_fit <- train(number_of_hours~., train_subset, method='gamLoess',tuneGrid=grid,trControl=tuningControl)
+
+gamLoess_fit
+
+predictions <- predict(gamLoess_fit,test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
+#194.6215
+
+save(gamLoess_fit,file='rda/gamLoess_model.rda')
+```
+
+Warnings received:
+extrapolation not allowed with blending
+ (Discovered by lowesd)liv too small.    
+ (Discovered by lowesd)lv too small
+ extrapolation not allowed with blending
+ non-list contrasts argument ignored
+
+
+```{r GamLoess model with scaling, echo = FALSE}
+# TODO review-keep or remove it
+set.seed(seed=1,sample.kind = 'Rounding')
+scaled_train_subset <- train_subset %>% mutate(across(c(mean_penalty_to_consider,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
+scaled_test_subset <- test_subset %>% mutate(across(c(mean_penalty_to_consider,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
+
+tuningControl=trainControl(method = "cv", number = 3, p = .8)
+#grid <- expand.grid(span = seq(0.15, 0.65, len = 10), degree = 1)
+grid <- expand.grid(span = seq(0.15, 0.65, len = 3), degree = 1)
+gamLoess_fit <- train(number_of_hours~., scaled_train_subset, method='gamLoess',tuneGrid=grid,trControl=tuningControl)
+
+gamLoess_fit
+
+predictions <- predict(gamLoess_fit,scaled_test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
+#194.7017
+
+save(gamLoess_fit,file='rda/gamLoess_model.rda')
+```
+Warnings received:
+extrapolation not allowed with blending
+ (Discovered by lowesd)liv too small.    
+ (Discovered by lowesd)lv too small
+ extrapolation not allowed with blending
+ non-list contrasts argument ignored
+
+
+```{r Final Model Training, echo = FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+
+penalty_data <- training_dataset %>% get_delay_in_handover_to_carrier_per_seller_id()
+
+training_dataset <- training_dataset %>% left_join(penalty_data,by='seller_id') %>% select(-seller_id,-handed_over_to_carrier_date,-shipping_limit_date)
+
+mtry_to_use <- rf_fit$finalModel$mtry
+ntree_to_use <- 500 #rf_fit$finalModel$ntree
+tuningControl <- trainControl(method = "cv", number = 2, p = .8)
+final_model <- train(number_of_hours~., training_dataset, method='rf',tuneGrid = data.frame(mtry = c(mtry_to_use)),trControl=tuningControl,ntree=ntree_to_use) 
+
+# final_model <- randomForest(number_of_hours~., training_dataset,mtry= mtry_to_use, ntree=ntree_to_use)
+
+final_model
+
+save(final_model,file='rda/final_model.rda')
+```
+
+
+```{r Final movel validation, echo = FALSE}
+validation_dataset <- validation_dataset %>% compute_volume_using_product_info() %>% extract_distance_between_seller_customer() %>% left_join(penalty_data,by='seller_id') %>% select(-seller_id,-handed_over_to_carrier_date,-shipping_limit_date)
+
+predictions <- predict(final_model,validation_dataset %>% select(-number_of_hours))
+
+RMSE((validation_dataset %>% pull(number_of_hours) ),predictions)
+# 194.6748 for mtry=25, ntree=500
+```
+
+
+
+
+===== TODO review from here
+
+Data used maybe incorrect
+Review joins and if multiple orders of same type are being delivered at the same time
+refer
+> training_dataset %>% filter(number_of_hours>=354.73 & number_of_hours<354.74)
+   price freight_value product_category_name product_weight_g number_of_hours volume
+1   59.0         13.43          garden_tools             1550        354.7386  19800
+2   59.0         13.43          garden_tools             1550        354.7386  19800
+3   59.0         13.43          garden_tools             1550        354.7386  19800
+4   59.0         13.43          garden_tools             1550        354.7386  19800
+5   59.0         13.43          garden_tools             1550        354.7386  19800
+6   59.0         13.43          garden_tools             1550        354.7386  19800
+7   59.0         13.43          garden_tools             1550        354.7386  19800
+8   59.0         13.43          garden_tools             1550        354.7386  19800
+9   59.0         13.43          garden_tools             1550        354.7386  19800
+10  59.0         13.43          garden_tools             1550        354.7386  19800
+11  59.0         13.43          garden_tools             1550        354.7386  19800
+12  66.0         14.21       furniture_decor             1150        354.7319  28175
+13  46.9         17.63        sports_leisure              300        354.7378   2304
+   distance_between_two_points mean_penalty_to_consider
+1                       469.74                -51.60514
+2                       469.74                -51.60514
+3                       469.74                -51.60514
+4                       469.74                -51.60514
+5                       469.74                -51.60514
+6                       469.74                -51.60514
+7                       469.74                -51.60514
+8                       469.74                -51.60514
+9                       469.74                -51.60514
+10                      469.74                -51.60514
+11                      469.74                -51.60514
+12                      807.32                -56.57523
+13                     1083.46               -147.48749
+
+
+```{r Derived data}
+# seller to customer distance should be right predictor to consider, as the text says "Those merchants are able to sell their products through the Olist Store and ship them directly to the customers using Olist logistics partners."
+# source: https://www.kaggle.com/olistbr/brazilian-ecommerce
+wrangled_data %>% head() %>% extract_distance_between_seller_customer()
+
+# plot of how 
+p1 <- wrangled_data %>% extract_distance_between_seller_customer() %>% ggplot(aes(distance_between_two_points)) + geom_histogram(binwidth=50)
+ggplotly(p1)
+```
+
+```{r Explore delayed handover to carrier, echo=FALSE }
+# TODO we maybe able to remove this as it is not used, because this is the info which is generally not available
+# identify if there was delay in delivery to carrier
+wrangled_data <- wrangled_data %>% mutate(delayed_to_carrier=if_else((as.numeric(handed_over_to_carrier_date)-as.numeric(shipping_limit_date))>0,TRUE,FALSE))
+
+wrangled_data <- wrangled_data %>% select(-shipping_limit_date,-handed_over_to_carrier_date,-order_estimated_delivery_date)
 ```
 
 ## Explore seller_zip_code_prefix with number_of_hours
@@ -394,9 +790,9 @@ wrangled_data %>% ggplot(aes(x=freight_value,y=number_of_hours)) + geom_smooth()
 ```{r Explore seller_zip_code_prefix with number_of_hours, echo = FALSE}
 # TODO anyway to add regularization or remove the low impact seller_zip_code_prefix from the model
 # let's plot errorbar for number of hours vs seller_zip_code_prefix
-sellers_zip_of_interest <- wrangled_data %>% dplyr::count(seller_zip_code_prefix) %>% filter(n>10) %>% pull(seller_zip_code_prefix)
+sellers_zip_of_interest <- training_dataset %>% dplyr::count(seller_zip_code_prefix) %>% filter(n>10) %>% pull(seller_zip_code_prefix)
 
-wrangled_data %>% filter(seller_zip_code_prefix %in% sellers_zip_of_interest) %>% group_by(seller_zip_code_prefix) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(seller_zip_code_prefix=reorder(seller_zip_code_prefix,mean)) %>%  ggplot(aes(x=seller_zip_code_prefix,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90)) + scale_y_sqrt() 
+training_dataset %>% filter(seller_zip_code_prefix %in% sellers_zip_of_interest) %>% group_by(seller_zip_code_prefix) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(seller_zip_code_prefix=reorder(seller_zip_code_prefix,mean)) %>%  ggplot(aes(x=seller_zip_code_prefix,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90)) + scale_y_sqrt() 
 ```
 Indicates role between seller_zip_code and number of hours for delivery
 
@@ -406,9 +802,9 @@ Indicates role between seller_zip_code and number of hours for delivery
 ```{r Explore customer_zip_code_prefix with number_of_hours, echo=FALSE}
 # TODO anyway to add regularization or remove the low impact customer_zip_code_prefix from the model
 # let's plot errorbar for number of hours vs customer_zip_code_prefix
-customers_zip_of_interest <- wrangled_data %>% dplyr::count(customer_zip_code_prefix) %>% filter(n>=5) %>% pull(customer_zip_code_prefix)
+customers_zip_of_interest <- training_dataset %>% dplyr::count(customer_zip_code_prefix) %>% filter(n>=5) %>% pull(customer_zip_code_prefix)
 
-wrangled_data %>% filter(customer_zip_code_prefix %in% customers_zip_of_interest) %>% group_by(customer_zip_code_prefix) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(customer_zip_code_prefix=reorder(customer_zip_code_prefix,mean)) %>%  ggplot(aes(x=customer_zip_code_prefix,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90)) + scale_y_sqrt()
+training_dataset %>% filter(customer_zip_code_prefix %in% customers_zip_of_interest) %>% group_by(customer_zip_code_prefix) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(customer_zip_code_prefix=reorder(customer_zip_code_prefix,mean)) %>%  ggplot(aes(x=customer_zip_code_prefix,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90)) + scale_y_sqrt()
 ```
 customer_zip_code_prefix can  be seen to be  influence number of hours for delivery
 
@@ -417,101 +813,16 @@ customer_zip_code_prefix can  be seen to be  influence number of hours for deliv
 ```{r Explore product_id with number_of_hours}
 # TODO anyway to add regularization or remove the low impact products from the model
 # let's plot errorbar for number of hours vs product_id
-products_of_interest <- wrangled_data %>% dplyr::count(product_id)  %>% filter(n>=10) %>% pull(product_id)
+products_of_interest <- training_dataset %>% dplyr::count(product_id)  %>% filter(n>=10) %>% pull(product_id)
 
-wrangled_data %>% filter(product_id %in% products_of_interest) %>% group_by(product_id) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(product_id=reorder(product_id,mean)) %>%  ggplot(aes(x=product_id,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_blank()) 
+training_dataset %>% filter(product_id %in% products_of_interest) %>% group_by(product_id) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(product_id=reorder(product_id,mean)) %>%  ggplot(aes(x=product_id,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_blank()) 
 ```
 It influences the number of hours
 
-## Explore volume of product group with number_of_hours
-
-```{r Explore volume of product group with number_of_hours, echo=FALSE}
-# let's plot errorbar for number of hours vs volume of product group
-wrangled_data %>% mutate(volume_group=round((product_length_cm*product_width_cm*product_height_cm)/1000)+1) %>% mutate(volume_group=as.factor(volume_group)) %>% group_by(volume_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=volume_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
-```
-It does not influencee much the number of hours
-
-However a smooth fit shows some pattern 
-```{r smooth fit for volume, echo=FALSE}
-wrangled_data %>% mutate(volume=product_length_cm*product_width_cm*product_height_cm) %>% ggplot(aes(volume,number_of_hours)) + geom_smooth()
-```
-
-## Explore weight of product with number_of_hours
-
-```{r Explore weight of product with number_of_hours}
-# let's plot errorbar for number of hours vs weight of product
-wrangled_data %>% mutate(weight_group=round((product_weight_g)/1000)+1) %>% mutate(weight_group=as.factor(weight_group)) %>% mutate(weight_group=as.factor(weight_group)) %>% group_by(weight_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=weight_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
-```
-Some clues but not strongly correlated.
-
-```{r Smooth fit for product, echo= FALSE}
-wrangled_data  %>% ggplot(aes(product_weight_g,number_of_hours)) + geom_smooth()
-```
+====TODO review above
 
 
 
-
-Calculating current RMSE range
-```{r Current RMSE}
-# current RMSE can be calculated by finding number of hours for predicted delivery time given by order_estimated_delivery_date vs actual outcome/number of hours give by order_delivered_customer_date
-# However, note that order_estimated_delivery_date has no timestamp, so we will remove timestamp component, round date using floor_date, which means any delivery done during the day say at 2017-10-10 21:25:13 is treated to be done on 2017-10-10
-
-# first we convert it to desired date
-# then we covert date to numeric i.e. to convert it to seconds
-orders_dataset %>% mutate(order_delivered_customer_date_low=floor_date(order_delivered_customer_date,unit="day"),order_delivered_customer_date_high=ceiling_date(order_delivered_customer_date,unit="day")) %>% mutate(order_delivered_customer_date_low=as.numeric(order_delivered_customer_date_low),order_delivered_customer_date_hugh=as.numeric(order_delivered_customer_date_high), order_estimated_delivery_date=as.numeric(order_estimated_delivery_date))  %>% head()
-
-
-# then we calculate time_taken_from_order_to_delivery, estimated_time_from_order_to_delivery in seconds
-data_for_rmse <- orders_dataset %>% mutate(order_delivered_customer_date_low=floor_date(order_delivered_customer_date,unit="day"),order_delivered_customer_date_high=ceiling_date(order_delivered_customer_date,unit="day"),order_purchase_timestamp=as.numeric(order_purchase_timestamp)) %>%  mutate(time_taken_from_order_to_delivery_rangemax=as.numeric(order_delivered_customer_date_high)-order_purchase_timestamp, time_taken_from_order_to_delivery_rangemin=as.numeric(order_delivered_customer_date_low)-order_purchase_timestamp, estimated_time_from_order_to_delivery = as.numeric(order_estimated_delivery_date) -order_purchase_timestamp) %>% mutate(estimated_time_from_order_to_delivery=estimated_time_from_order_to_delivery/3600,time_taken_from_order_to_delivery_rangemax = time_taken_from_order_to_delivery_rangemax/3600,time_taken_from_order_to_delivery_rangemin = time_taken_from_order_to_delivery_rangemin/3600) %>%  select(estimated_time_from_order_to_delivery,time_taken_from_order_to_delivery_rangemax,time_taken_from_order_to_delivery_rangemin)
-
-RMSE_value_based_on_max <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemax,data_for_rmse$estimated_time_from_order_to_delivery)
-# 357.53
-
-RMSE_value_based_on_min <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemin,data_for_rmse$estimated_time_from_order_to_delivery)
-# 375.408
-
-# if we look at graph we can  see there is huge difference between estimate data and actual delivery date
-# it is possible some products are bulky or require differen mode of transport like ship 
-p1 <- data_for_rmse %>% mutate(diff=estimated_time_from_order_to_delivery-1/2*(time_taken_from_order_to_delivery_rangemax+time_taken_from_order_to_delivery_rangemin)) %>% ggplot(aes(diff)) + geom_histogram(binwidth = 24*2) + xlab('Estimation error where each bar represents 2 days')
-
-library(plotly)
-ggplotly(p1)
-```
-
-
-
-
-
-Split data into training and validation set, where validation set will be used later
-```{r Split data into training and validation set}
-set.seed(1,sample.kind = 'Rounding')
-test_indices <- createDataPartition(wrangled_data$number_of_hours,times=1,p=0.2,list=FALSE)
-
-training_dataset <- wrangled_data[-test_indices,]
-validation_dataset <- wrangled_data[test_indices,]
-
-# ensure validation_dataset has products only for concerned product categories which are in training_dataset 
-validation_dataset <- validation_dataset %>% semi_join(training_dataset,by='product_category_name')
-
-rm(test_indices)
-```
-
-
-We use training_dataset and split into into train and test set. So that training_dataset is sufficient to fine tune the model
-```{r Split data for training}
-# Let's split training_dataset into two parts
-set.seed(1,sample.kind = 'Rounding')
-training_dataset <- training_dataset %>% mutate(volume=product_length_cm*product_height_cm*product_width_cm) %>% select(-customer_unique_id,-seller_id,-product_id,-customer_zip_code_prefix,-seller_zip_code_prefix,-product_length_cm,-product_height_cm,-product_width_cm)
-
-test_indices <- createDataPartition(training_dataset$number_of_hours,times=1,p=0.2,list=FALSE)
-
-train_subset <- training_dataset[-test_indices,]
-test_subset <- training_dataset[test_indices,]
-# ensure test_subset has products only for concerned product categories which are in train_subset
-test_subset <- test_subset %>% semi_join(train_subset,by='product_category_name')
-
-rm(test_indices)
-```
 
 ### Linear model trial and analysis
 
@@ -636,103 +947,11 @@ Existing model algorithms should handle regularization. So we should not be requ
 We can use conditional model i.e. for some use different model and for some use different model just like ensemble.
 So basically we could say for these pin codes, delivery time= say mean of delivery time and for others use standard algorthm like random forest etc.
 
-```{r knn model, echo = FALSE}
-set.seed(seed=1,sample.kind = 'Rounding')
-#tuningControl=trainControl(method = "cv", number = 2, p = .8)
-#knn_fit <- train(number_of_hours~., train_subset, method='knn',tuneGrid=data.frame(k=c(15,21,30)),trControl=tuningControl)
-tuningControl=trainControl(method = "cv", number = 3, p = .8)
-knn_fit <- train(number_of_hours~., train_subset, method='knn',tuneGrid=data.frame(k=c(15,23,31)),trControl=tuningControl)
-
-knn_fit
-
-predictions <- predict(knn_fit,test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-#199.8518
-
-save(knn_fit,file='rda/knn_model.rda')
-```
-
 
 gam?
 gamLoess??
 
-```{r GamLoess model, echo = FALSE}
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 3, p = .8)
-#grid <- expand.grid(span = seq(0.15, 0.65, len = 10), degree = 1)
-grid <- expand.grid(span = seq(0.15, 0.65, len = 3), degree = 1)
-gamLoess_fit <- train(number_of_hours~., train_subset, method='gamLoess',tuneGrid=grid,trControl=tuningControl)
 
-gamLoess_fit
-
-predictions <- predict(gamLoess_fit,test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-#197.0024
-
-save(gamLoess_fit,file='rda/gamLoess_model.rda')
-```
-
-Warnings received:
-extrapolation not allowed with blending
- (Discovered by lowesd)liv too small.    
- (Discovered by lowesd)lv too small
- extrapolation not allowed with blending
- non-list contrasts argument ignored
-
-```{r Gam model, echo = FALSE}
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number =2, p = .8)
-gam_fit <- train(number_of_hours~., train_subset, method='gam',trControl=tuningControl) # check for tuning parameters
-
-gam_fit
-
-predictions <- predict(gam_fit,test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 197.5325
-
-save(gam_fit,file='rda/gam_model.rda')
-```
-
-
-Random forest
-However, it is important to know your data and keep in mind that a Random Forest can’t extrapolate. It can only make a prediction that is an average of previously observed labels. In this sense it is very similar to KNN.
-In other words, in a regression problem, the range of predictions a Random Forest can make is bound by the highest and lowest labels in the training data. This behavior becomes problematic in situations where the training and prediction inputs differ in their range and/or distributions. This is called covariate shift and it is difficult for most models to handle but especially for Random Forest, because it can’t extrapolate.
-From : https://towardsdatascience.com/a-limitation-of-random-forest-regression-db8ed7419e9f
-
-```{r rf model, echo = FALSE}
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 2, p = .8)
-rf_fit <- train(number_of_hours~., train_subset, method='rf',tuneGrid = data.frame(mtry = seq(2, 6, 2)),trControl=tuningControl) # nodesize = 50,maxnodes=2000,ntree=200
-
-rf_fit
-
-predictions <- predict(rf_fit,test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 192.9998
-
-save(rf_fit,file='rda/rf_model.rda')
-```
-
-
-```{r Glm model}
-# Let's try with glm model
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 2, p = .8)
-glm_fit <- train(number_of_hours~., train_subset, method='glm',trControl=tuningControl)
-
-glm_fit
-
-predictions <- predict(glm_fit, test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 199.4791 (improves if we use seller_id as predictor as well)
-```
-Warning:
-prediction from a rank-deficient fit may be misleading
 
 
 ## Experimets which failed
@@ -821,7 +1040,7 @@ seller_ids_of_interest <- raw_data  %>% mutate(order_purchase_timestamp=as.numer
 dummy_wrangled_data <- raw_data  %>% mutate(order_purchase_timestamp=as.numeric(order_purchase_timestamp),order_delivered_customer_date=as.numeric(order_delivered_customer_date),product_id=as.factor(product_id),seller_id=as.factor(seller_id),seller_zip_code_prefix=as.factor(seller_zip_code_prefix),customer_unique_id=as.factor(customer_unique_id),customer_zip_code_prefix=as.factor(customer_zip_code_prefix),product_category_name=as.factor(product_category_name)) %>% mutate(number_of_hours=(order_delivered_customer_date-order_purchase_timestamp)/3600) %>% select(-order_delivered_customer_date,-order_purchase_timestamp)  %>% filter(seller_id %in% seller_ids_of_interest) %>% mutate(delay= (as.numeric(handed_over_to_carrier_date) -as.numeric(shipping_limit_date))/3600) %>% select(-shipping_limit_date,-handed_over_to_carrier_date,-payment_approved_at,-order_id,-order_estimated_delivery_date,-order_item_id,-delayed_to_carrier)
 
 
-penalty_data <- raw_data  %>% mutate(order_purchase_timestamp=as.numeric(order_purchase_timestamp),order_delivered_customer_date=as.numeric(order_delivered_customer_date),product_id=as.factor(product_id),seller_id=as.factor(seller_id),seller_zip_code_prefix=as.factor(seller_zip_code_prefix),customer_unique_id=as.factor(customer_unique_id),customer_zip_code_prefix=as.factor(customer_zip_code_prefix),product_category_name=as.factor(product_category_name)) %>% mutate(number_of_hours=(order_delivered_customer_date-order_purchase_timestamp)/3600) %>% select(-order_delivered_customer_date,-order_purchase_timestamp)  %>% filter(seller_id %in% seller_ids_of_interest) %>% mutate(delay= (as.numeric(handed_over_to_carrier_date) -as.numeric(shipping_limit_date))/3600) %>% group_by(seller_id) %>% summarise(mean_penalty_to_consider=mean(delay))
+penalty_data <- wrangled_data %>% get_delay_in_handover_to_carrier_per_seller_id()
 
 
 set.seed(1,sample.kind = 'Rounding')
@@ -849,7 +1068,8 @@ dummy_train_subset <- dummy_train_subset %>% select(-seller_id,-delay)
 # Let's try with rf model
 set.seed(seed=1,sample.kind = 'Rounding')
 tuningControl=trainControl(method = "cv", number = 2, p = .8)
-rf_fit_dummy <- train(number_of_hours~., dummy_train_subset, method='rf',tuneGrid = data.frame(mtry = seq(5, 7, 1)),trControl=tuningControl) # nodesize = 50,maxnodes=2000,ntree=200
+# rf_fit_dummy <- train(number_of_hours~., dummy_train_subset, method='rf',tuneGrid = data.frame(mtry = seq(5, 15, 4)),trControl=tuningControl) # nodesize = 50,maxnodes=2000,ntree=200
+rf_fit_dummy <- train(number_of_hours~., dummy_train_subset, method='rf',tuneGrid = data.frame(mtry = seq(20, 40, 8)),trControl=tuningControl) # nodesize = 50,maxnodes=2000,ntree=200
 
 rf_fit_dummy
 
@@ -858,7 +1078,7 @@ dummy_test_subset <- dummy_test_subset %>% left_join(penalty_data,by='seller_id'
 predictions <- predict(rf_fit_dummy,dummy_test_subset %>% select(-number_of_hours))
 
 RMSE(predictions,(dummy_test_subset %>% pull(number_of_hours) ))
-#188.2743
+#184.0301 for mtry 13. Technically there are total of ~79 variables due to 72-74 product categories and 6 other predictors
 ```
 
 
