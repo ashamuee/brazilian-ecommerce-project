@@ -572,23 +572,6 @@ test_subset <- test_subset %>% left_join(penalty_data,by='seller_id') %>% select
 ```
 
 
-```{r knn model, echo = FALSE}
-#TODO can be removed
-set.seed(seed=1,sample.kind = 'Rounding')
-
-tuningControl=trainControl(method = "cv", number = 3, p = .8)
-knn_fit <- train(number_of_hours~., train_subset, method='knn',tuneGrid=data.frame(k=c(27,34,41)),trControl=tuningControl)
-
-knn_fit
-
-predictions <- predict(knn_fit,test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-#199.448 for k=34
-
-save(knn_fit,file='rda/knn_model.rda')
-```
-
 
 ```{r Apply Target encoding, echo = FALSE}
   train_subset_for_encoding <- train_subset[1:30000,]
@@ -724,7 +707,6 @@ save(knn_fit,file='rda/knn_model.rda')
 ```
 
 
-
 Random forest
 However, it is important to know your data and keep in mind that a Random Forest can’t extrapolate. It can only make a prediction that is an average of previously observed labels. In this sense it is very similar to KNN.
 In other words, in a regression problem, the range of predictions a Random Forest can make is bound by the highest and lowest labels in the training data. This behavior becomes problematic in situations where the training and prediction inputs differ in their range and/or distributions. This is called covariate shift and it is difficult for most models to handle but especially for Random Forest, because it can’t extrapolate.
@@ -740,7 +722,7 @@ rf_fit
 predictions <- predict(rf_fit,test_subset %>% select(-number_of_hours))
 
 RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 184.1709 for mtry 15. Technically there are total of 79 variables due to 73 product categories and 6 other predictors
+# 184.5549 for mtry 15. Technically there are total of 79 variables due to 73 product categories and 6 other predictors
 
 save(rf_fit,file='rda/rf_model.rda')
 ```
