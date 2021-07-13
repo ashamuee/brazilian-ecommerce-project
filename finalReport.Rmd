@@ -1261,14 +1261,13 @@ save(final_model,file='rda/final_model.rda')
 ```
 
 
-```{r Final movel validation, echo = FALSE}
-validation_dataset <- validation_dataset %>% select(-seller_id,-handed_over_to_carrier_date,-shipping_limit_date)
-
+```{r Final model validation, echo = FALSE}
 predictions <- predict(final_model,validation_dataset %>% select(-number_of_hours))
 
 RMSE((validation_dataset %>% pull(number_of_hours) ),predictions)
-# 194.6748 for mtry=25, ntree=500
+# 190.184 for mtry=15, ntree=500
 ```
+
 
 
 
