@@ -591,6 +591,11 @@ test_subset <- test_subset %>% left_join(penalty_data,by='seller_id') %>% select
 
 ==TODO note penalty data should be calculated again if train_subset is changed. Only trained data should be used for test, so that there is no data leak.
 
+
+```{r Dataframe to store target encoding weights, include=FALSE}
+target_encoding_weights <- data.frame(effect=character(0),weight=double(0)) 
+```
+
 ```{r Apply Target encoding for seller_id, echo = FALSE}
 #TODO you may need to remove customer_state and seller_state from dataset train_subset_for_encoding before proceeding further.
 
@@ -660,6 +665,8 @@ weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition)  
 # 3
+
+target_encoding_weights <- target_encoding_weights %>% add_row(effect='seller_id',weight=weight_to_use)
 ```
 
 ```{r Post regularization for seller_id effect, echo=FALSE}
@@ -768,6 +775,8 @@ weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition) 
 # 20
+
+target_encoding_weights <- target_encoding_weights %>% add_row(effect='customer_state',weight=weight_to_use)
 ```
 
 ```{r Post regularization with consumer state effect, echo=FALSE}
@@ -876,6 +885,8 @@ weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition) 
 # 5/3 = 1.66667
+
+target_encoding_weights <- target_encoding_weights %>% add_row(effect='customer_loc',weight=weight_to_use)
 ```
 
 ```{r Post regularization with customer loc effect, echo=FALSE}
@@ -995,88 +1006,254 @@ save(gam_fit,file='rda/gam_model.rda')
 ```
 
 
-```{r Glm model}
-# Let's try with glm model
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 2, p = .8)
-glm_fit <- train(number_of_hours~., train_subset, method='glm',trControl=tuningControl)
+```{r Prepare seller_id effect based on target encoding, include = FALSE}
+# prepare seller_id_effect based on regularisation weight we have identified
+prepare_seller_id_effect <- function(train_df, weight_to_use) {
+    global_mean <- mean(train_df$number_of_hours)
+    
+    set.seed(1,sample.kind='Rounding')
+    test_weight_indices <- createDataPartition(train_df$number_of_hours, p=0.2,times=10,list=FALSE)
+    
+    seller_id_effects_list <- lapply(1:10, function(index) {
+      train_weight_set <- train_df[-test_weight_indices[,index],]
 
-glm_fit
-
-predictions <- predict(glm_fit, test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 198.8575 (improves if we use seller_id as predictor as well)
+      seller_id_effects <- train_weight_set %>% 
+        group_by(seller_id) %>%
+        summarise(mean=mean(number_of_hours),n=n()) %>%
+        mutate(mean=(n*mean+weight_to_use*global_mean)/(n+weight_to_use)) %>% 
+        select(-n) %>% rename()
+    
+      seller_id_effects
+    })
+    
+    
+    sie <- seller_id_effects_list[[1]]
+    for (index in 2:10) {
+       sie <- sie %>% 
+         full_join(seller_id_effects_list[[index]],by='seller_id', suffix=c("1",index))
+    }
+    
+    # whereever value is NA, we have used global mean
+    sie <- sie %>% mutate(across(-seller_id,~if_else(is.na(.x),global_mean,.x)))
+    
+    # as different partitions may not have exactly same data set combined the results
+    seller_id_effects <- tibble(sie[,1], seller_id_effect=rowMeans(sie[,-1],na.rm = TRUE))
+    
+    #seller id effects are ready
+    seller_id_effects
+}
 ```
-Warning:
-prediction from a rank-deficient fit may be misleading
 
-```{r GamLoess model, echo = FALSE}
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 3, p = .8)
-#grid <- expand.grid(span = seq(0.15, 0.65, len = 10), degree = 1)
-grid <- expand.grid(span = seq(0.15, 0.65, len = 3), degree = 1)
-gamLoess_fit <- train(number_of_hours~., train_subset, method='gamLoess',tuneGrid=grid,trControl=tuningControl)
+```{r Prepare customer_state effect based on target encoding, include = FALSE}
+# prepare consumer_state_effect based on regularisation weight we have identified
+prepare_customer_state_effect <- function(train_df, weight_to_use) {
+  global_mean <- mean(train_df$number_of_hours)
 
-gamLoess_fit
+  set.seed(1,sample.kind='Rounding')
+  test_weight_indices <- createDataPartition(train_df$number_of_hours,p=0.2,times=10,list=FALSE)
 
-predictions <- predict(gamLoess_fit,test_subset %>% select(-number_of_hours))
+  customer_state_effects_list <- lapply(1:10, function(index) {
+      train_weight_set <- train_df[-test_weight_indices[,index],]
+  
+      customer_state_effects <- train_weight_set %>% 
+        group_by(customer_state) %>%
+        summarise(mean=mean(number_of_hours),n=n()) %>%
+        mutate(mean=(n*mean+weight_to_use*global_mean)/(n+weight_to_use)) %>% 
+        select(-n) %>% rename()
+      
+      customer_state_effects
+    }
+  )
 
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-#194.6215
+  cse <- customer_state_effects_list[[1]]
+  for (index in 2:10) {
+     cse <- cse %>% 
+       full_join(customer_state_effects_list[[index]],by='customer_state', suffix=c("1",index))
+  }
 
-save(gamLoess_fit,file='rda/gamLoess_model.rda')
+  # whereever value is NA, we have used global mean
+  cse <- cse %>% mutate(across(-customer_state,~if_else(is.na(.x),global_mean,.x)))
+  
+  # as different partitions may not have exactly same data set combined the results
+  customer_state_effects <- tibble(cse[,1], customer_state_effect=rowMeans(cse[,-1],na.rm = TRUE))
+  
+  #customer state effects are ready
+  customer_state_effects
+}
 ```
 
-Warnings received:
-extrapolation not allowed with blending
- (Discovered by lowesd)liv too small.    
- (Discovered by lowesd)lv too small
- extrapolation not allowed with blending
- non-list contrasts argument ignored
+```{r Prepare customer_loc effect based on target encoding, include = FALSE}
+# prepare customer_loc_effect based on regularisation weight we have identified
+prepare_customer_loc_effect <- function(train_df, weight_to_use) {
+  global_mean <- mean(train_df$number_of_hours)
 
+  set.seed(1,sample.kind='Rounding')
+  test_weight_indices <- createDataPartition(train_df$number_of_hours,p=0.2,times=10,list=FALSE)
 
-```{r GamLoess model with scaling, echo = FALSE}
-# TODO review-keep or remove it
-set.seed(seed=1,sample.kind = 'Rounding')
-scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
-scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
+  customer_loc_effects_list <- lapply(1:10, function(index) {
+      train_weight_set <- train_df[-test_weight_indices[,index],]
+  
+      customer_loc_effects <- train_weight_set %>% 
+        group_by(customer_loc) %>%
+        summarise(mean=mean(number_of_hours),n=n()) %>%
+        mutate(mean=(n*mean+weight_to_use*global_mean)/(n+weight_to_use)) %>% 
+        select(-n) %>% rename()
+      
+      customer_loc_effects
+    }
+  )
 
-tuningControl=trainControl(method = "cv", number = 3, p = .8)
-#grid <- expand.grid(span = seq(0.15, 0.65, len = 10), degree = 1)
-grid <- expand.grid(span = seq(0.15, 0.65, len = 3), degree = 1)
-gamLoess_fit <- train(number_of_hours~., scaled_train_subset, method='gamLoess',tuneGrid=grid,trControl=tuningControl)
+  cle <- customer_loc_effects_list[[1]]
+  for (index in 2:10) {
+     cle <- cle %>% full_join(customer_loc_effects_list[[index]],by='customer_loc', suffix=c("1",index))
+  }
 
-gamLoess_fit
+  # where-ever value is NA, we have used global mean
+  cle <- cle %>% mutate(across(-customer_loc,~if_else(is.na(.x),global_mean,.x)))
 
-predictions <- predict(gamLoess_fit,scaled_test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
-#194.7017
-
-save(gamLoess_fit,file='rda/gamLoess_model.rda')
+  # as different partitions may not have exactly same data set combined the results
+  customer_loc_effects <- tibble(cle[,1], customer_loc_effect=rowMeans(cle[,-1],na.rm = TRUE))
+  
+  #customer loc effects are ready
+  customer_loc_effects
+}
 ```
-Warnings received:
-extrapolation not allowed with blending
- (Discovered by lowesd)liv too small.    
- (Discovered by lowesd)lv too small
- extrapolation not allowed with blending
- non-list contrasts argument ignored
+
+
+
+
+```{r Enhance training and test dataset for seller_id effect based on target encoding, include = FALSE}
+enhance_datasets_using_seller_id_effect <- function(seller_id_effects,train_df,test_df,cleanup) {
+  #we will use seller id effects computed using training data in test data.
+  train_df <- train_df %>% left_join(seller_id_effects,by='seller_id') %>% mutate(seller_id_effect=if_else(is.na(seller_id_effect),global_mean,seller_id_effect))
+        
+  test_df <- test_df %>% left_join(seller_id_effects,by='seller_id')
+  
+  # cleanup
+  if (cleanup) {
+    train_df <- train_df %>% select(-product_category_name,-seller_id)
+    test_df <- test_df %>% select(-product_category_name,-seller_id)
+  }
+  
+  list(train_df,test_df)
+}
+```
+
+
+```{r Enhance training and test dataset for customer_state effect based on target encoding, include = FALSE}
+enhance_datasets_using_customer_state_effect <- function(customer_state_effects,train_df,test_df,cleanup) {
+  #we will use customer state effects computed using training data in test data.
+  train_df <- train_df %>% left_join(customer_state_effects,by='customer_state') %>%
+    mutate(customer_state_effect=if_else(is.na(customer_state_effect),
+                                         global_mean,
+                                         customer_state_effect))
+        
+  test_df <- test_df %>% left_join(customer_state_effects,by='customer_state') 
+  
+  # cleanup
+  if (cleanup) {
+    train_df <- train_df %>% select(-customer_state)
+    test_df <- test_df %>% select(-customer_state)
+  }
+  
+  list(train_df,test_df)
+}
+```
+
+```{r Enhance training and test dataset for customer_loc effect based on target encoding, include = FALSE}
+enhance_datasets_using_customer_loc_effect <- function(customer_loc_effects,train_df,test_df,cleanup) {
+  #we will use customer loc effects computed using training data in test data.
+  train_df <- train_df %>% 
+    left_join(customer_loc_effects,by='customer_loc') %>%
+    mutate(customer_loc_effect=if_else(is.na(customer_loc_effect),global_mean,customer_loc_effect))
+        
+  test_df <- test_df %>% left_join(customer_loc_effects,by='customer_loc')
+  
+  # cleanup
+  if (cleanup) {
+    train_df <- train_df %>% select(-customer_loc,-customer_zip_code_prefix)
+    test_df <- test_df %>% select(-customer_loc,-customer_zip_code_prefix)
+  }
+  
+  list(train_df,test_df)
+}
+```
+
+
+```{r Prepare data set for training, include = FALSE}
+# prepares data for training and testing
+# returns list of data frames. First list has training dataframe. Second list has test data frame
+prepare_data_for_training_testing <- function(train_ds, test_ds, cleanup) {
+  print('Adding column for delay in handover')
+  penalty_data <- train_ds %>% get_delay_in_handover_to_carrier_per_seller_id()
+  
+  #we will use penalty_data computed using training data in test data.
+  train_ds <- train_ds %>% left_join(penalty_data,by='seller_id') 
+  test_ds <- test_ds %>% left_join(penalty_data,by='seller_id')
+  if (cleanup) {
+    train_ds <- train_ds %>% select(-handed_over_to_carrier_date,-shipping_limit_date)
+    test_ds <- test_ds %>% select(-handed_over_to_carrier_date,-shipping_limit_date)
+  }
+
+  print('Enhancing data for seller id effects')
+  weight_to_use <- target_encoding_weights %>% filter(effect=='seller_id') %>% pull(weight)
+  seller_id_effects <- prepare_seller_id_effect(train_ds,weight_to_use)
+  dataset_list <- enhance_datasets_using_seller_id_effect(seller_id_effects,train_ds,test_ds,cleanup)
+  train_ds <- dataset_list[[1]]
+  test_ds <- dataset_list[[2]]
+  
+  print('Enhancing data for customer state effects')
+  weight_to_use <- target_encoding_weights %>% filter(effect=='customer_state') %>% pull(weight)
+  customer_state_effects <- prepare_customer_state_effect(train_ds,weight_to_use)
+  dataset_list <- enhance_datasets_using_customer_state_effect(customer_state_effects,train_ds,test_ds,cleanup)
+  train_ds <- dataset_list[[1]]
+  test_ds <- dataset_list[[2]]
+  
+  print('Enhancing data for customer loc effects')
+  weight_to_use <- target_encoding_weights %>% filter(effect=='customer_loc') %>% pull(weight)
+  customer_loc_effects <- prepare_customer_loc_effect(train_ds,weight_to_use)
+  dataset_list <- enhance_datasets_using_customer_loc_effect(customer_loc_effects,train_ds,test_ds,cleanup)
+  dataset_list
+}
+```
+
+
+
+```{r Prepare dataset for final model training, echo = FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+
+validation_dataset <- validation_dataset %>% 
+  compute_volume_using_product_info() %>% 
+  extract_distance_between_seller_customer() %>% 
+  compute_rough_customer_location()
+
+dataset_list <- prepare_data_for_training_testing(training_dataset,validation_dataset,FALSE)
+training_dataset <- dataset_list[[1]]
+validation_dataset <- dataset_list[[2]]
+
+validation_dataset <- validation_dataset %>%
+  semi_join(training_dataset,by='product_category_name') %>% 
+  semi_join(training_dataset,by='seller_id') %>% 
+  semi_join(training_dataset,by='customer_state') %>%
+  semi_join(training_dataset,by='customer_loc')
+
+# cleanup
+training_dataset <- training_dataset %>%
+  select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix)
+validation_dataset <- validation_dataset %>%
+  select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix)
+```
 
 
 ```{r Final Model Training, echo = FALSE}
 set.seed(seed=1,sample.kind = 'Rounding')
 
-penalty_data <- training_dataset %>% get_delay_in_handover_to_carrier_per_seller_id()
-
-training_dataset <- training_dataset %>% left_join(penalty_data,by='seller_id') %>% select(-seller_id,-handed_over_to_carrier_date,-shipping_limit_date)
-
 mtry_to_use <- rf_fit$finalModel$mtry
 ntree_to_use <- 500 #rf_fit$finalModel$ntree
-tuningControl <- trainControl(method = "cv", number = 2, p = .8)
-final_model <- train(number_of_hours~., training_dataset, method='rf',tuneGrid = data.frame(mtry = c(mtry_to_use)),trControl=tuningControl,ntree=ntree_to_use) 
+#tuningControl <- trainControl(method = "cv", number = 2, p = .8)
+#final_model <- train(number_of_hours~., training_dataset, method='rf',tuneGrid = data.frame(mtry = c(mtry_to_use)),trControl=tuningControl,ntree=ntree_to_use) 
 
-# final_model <- randomForest(number_of_hours~., training_dataset,mtry= mtry_to_use, ntree=ntree_to_use)
+final_model <- randomForest(number_of_hours~., training_dataset,mtry= mtry_to_use, ntree=ntree_to_use)
 
 final_model
 
@@ -1085,7 +1262,7 @@ save(final_model,file='rda/final_model.rda')
 
 
 ```{r Final movel validation, echo = FALSE}
-validation_dataset <- validation_dataset %>% compute_volume_using_product_info() %>% extract_distance_between_seller_customer() %>% left_join(penalty_data,by='seller_id') %>% select(-seller_id,-handed_over_to_carrier_date,-shipping_limit_date)
+validation_dataset <- validation_dataset %>% select(-seller_id,-handed_over_to_carrier_date,-shipping_limit_date)
 
 predictions <- predict(final_model,validation_dataset %>% select(-number_of_hours))
 
@@ -1150,157 +1327,9 @@ wrangled_data <- wrangled_data %>% mutate(delayed_to_carrier=if_else((as.numeric
 wrangled_data <- wrangled_data %>% select(-shipping_limit_date,-handed_over_to_carrier_date,-order_estimated_delivery_date)
 ```
 
-## Explore seller_zip_code_prefix with number_of_hours
-
-```{r Explore seller_zip_code_prefix with number_of_hours, echo = FALSE}
-# TODO anyway to add regularization or remove the low impact seller_zip_code_prefix from the model
-# let's plot errorbar for number of hours vs seller_zip_code_prefix
-sellers_zip_of_interest <- training_dataset %>% dplyr::count(seller_zip_code_prefix) %>% filter(n>10) %>% pull(seller_zip_code_prefix)
-
-training_dataset %>% filter(seller_zip_code_prefix %in% sellers_zip_of_interest) %>% group_by(seller_zip_code_prefix) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(seller_zip_code_prefix=reorder(seller_zip_code_prefix,mean)) %>%  ggplot(aes(x=seller_zip_code_prefix,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90)) + scale_y_sqrt() 
-```
-Indicates role between seller_zip_code and number of hours for delivery
 
 
-## Explore customer_zip_code_prefix with number_of_hours
-
-```{r Explore customer_zip_code_prefix with number_of_hours, echo=FALSE}
-# TODO anyway to add regularization or remove the low impact customer_zip_code_prefix from the model
-# let's plot errorbar for number of hours vs customer_zip_code_prefix
-customers_zip_of_interest <- training_dataset %>% dplyr::count(customer_zip_code_prefix) %>% filter(n>=5) %>% pull(customer_zip_code_prefix)
-
-training_dataset %>% filter(customer_zip_code_prefix %in% customers_zip_of_interest) %>% group_by(customer_zip_code_prefix) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(customer_zip_code_prefix=reorder(customer_zip_code_prefix,mean)) %>%  ggplot(aes(x=customer_zip_code_prefix,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90)) + scale_y_sqrt()
-```
-customer_zip_code_prefix can  be seen to be  influence number of hours for delivery
-
-## Explore product_id with number_of_hours
-
-```{r Explore product_id with number_of_hours}
-# TODO anyway to add regularization or remove the low impact products from the model
-# let's plot errorbar for number of hours vs product_id
-products_of_interest <- training_dataset %>% dplyr::count(product_id)  %>% filter(n>=10) %>% pull(product_id)
-
-training_dataset %>% filter(product_id %in% products_of_interest) %>% group_by(product_id) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% mutate(product_id=reorder(product_id,mean)) %>%  ggplot(aes(x=product_id,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_blank()) 
-```
-It influences the number of hours
-
-====TODO review above
-
-
-
-
-### Linear model trial and analysis
-
-```{r Linear model, eval=FALSE, echo = FALSE}
-# trying to reduce coefficients.
-# in dimensions we can use volume to decrase predictors
-
-
-########### only price predictor#############
-## only price complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(price,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(price))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 220.4085
-
-
-
-## only price,distance_between_two_points complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(price,distance_between_two_points,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(price,distance_between_two_points))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 202.0175
-
-
-## only price,distance_between_two_points,product_weight_g complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(price,distance_between_two_points,product_weight_g,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(price,distance_between_two_points,product_weight_g))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 201.1412
-
-
-## only price,distance_between_two_points,product_weight_g,volume complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(price,distance_between_two_points,product_weight_g,volume,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(price,distance_between_two_points,product_weight_g,volume))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 201.1086
-
-
-## only price,distance_between_two_points,product_weight_g,volume,freight_value complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(price,distance_between_two_points,product_weight_g,volume,freight_value,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(price,distance_between_two_points,product_weight_g,volume,freight_value))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 201.1047
-
-
-## only product_category_name complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(product_category_name,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(product_category_name))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 218.8943
-
-
-
-# if we combine this with other predictors
-## only price,distance_between_two_points,product_category_name complete data
-lm_fit <- train(number_of_hours~., train_subset %>% select(price,distance_between_two_points,product_category_name,number_of_hours), method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(price,distance_between_two_points,product_category_name))
-
-RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 199.8844
-```
-
-```{r Linear model with all predictors, echo=FALSE}
-# above is a fine model
-# with all predictors
-lm_fit <- train(number_of_hours~., train_subset, method='lm')
-
-lm_fit
-
-predictions <- predict(lm_fit,test_subset %>% select(-number_of_hours))
-
-RMSE((test_subset %>% pull(number_of_hours) ), predictions)
-# 199.4791
-
-save(lm_fit,file='rda/lm_model.rda')
-```
-Warnings received:
-prediction from a rank-deficient fit may be misleading
-
-
-
-To improve model performance consider--> changing character categorical variables to numerical categorical variables like
-  
-  product_category_name=as.factor(as.numeric(product_category_name)) 
-
-use levels from original data for completeness
+===TODO review
 
 look for variables which have limited to no results and we can combine them as one categorical variable
 Refer: https://www.analyticsvidhya.com/blog/2015/11/easy-methods-deal-categorical-variables-predictive-modeling/
@@ -1312,57 +1341,8 @@ Existing model algorithms should handle regularization. So we should not be requ
 We can use conditional model i.e. for some use different model and for some use different model just like ensemble.
 So basically we could say for these pin codes, delivery time= say mean of delivery time and for others use standard algorthm like random forest etc.
 
-
 gam?
 gamLoess??
-
-
-
-
-## Experimets which failed
-
-Let's play with seller_id. It deriorates rf model and for gam model there was no improvement
-```{r play with seller_id, eval=FALSE, echo = FALSE}
-set.seed(1,sample.kind = 'Rounding')
-test_indices <- createDataPartition(wrangled_data$number_of_hours,times=1,p=0.2,list=FALSE)
-dummy_data <- wrangled_data[-test_indices,]
-dummy_data <- dummy_data %>% mutate(volume=product_length_cm*product_height_cm*product_width_cm) %>% mutate(seller_id=factor(as.numeric(seller_id))) %>% select(-customer_unique_id,-product_id,-customer_zip_code_prefix,-seller_zip_code_prefix,-product_length_cm,-product_height_cm,-product_width_cm)
-
-
-set.seed(1,sample.kind = 'Rounding')
-test_indices <- createDataPartition(dummy_data$number_of_hours,times=1,p=0.2,list=FALSE)
-dummy_train_subset <- dummy_data[-test_indices,]
-dummy_test_subset <- dummy_data[test_indices,]
-
-# only keeping those rows which have seller_id in training set
-dummy_test_subset <- dummy_test_subset %>% semi_join(dummy_train_subset,by='seller_id')
-
-# used gam model but it did not use seller id at all 
-# Let's try with rf model
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 2, p = .8)
-rf_fit_dummy <- train(number_of_hours~., dummy_train_subset, method='rf',tuneGrid = data.frame(mtry = seq(5, 7, 1)),trControl=tuningControl) # nodesize = 50,maxnodes=2000,ntree=200
-
-rf_fit_dummy
-
-predictions <- predict(rf_fit_dummy,dummy_test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(dummy_test_subset %>% pull(number_of_hours) ))
-# 203.6908
-
-
-# Let's try with glm model
-set.seed(seed=1,sample.kind = 'Rounding')
-tuningControl=trainControl(method = "cv", number = 2, p = .8)
-glm_fit_dummy <- train(number_of_hours~., dummy_train_subset, method='glm',trControl=tuningControl)
-
-glm_fit_dummy
-
-predictions <- predict(glm_fit_dummy,dummy_test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(dummy_test_subset %>% pull(number_of_hours) ))
-# 195.4884
-```
 
 
 ```{r ensemble, echo = FALSE}
