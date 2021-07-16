@@ -1,0 +1,614 @@
+---
+title: "CYO Project Report - Delivery Estimation System"
+author: "Asham Vohra"
+date: "6/21/2021"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+Delivery Performance:
+
+You will also be able to work through delivery performance and find ways to optimize delivery times.
+
+Attention
+
+- An order might have multiple items.
+- Each item might be fulfilled by a distinct seller.
+- All text identifying stores and partners where replaced by the names of Game of Thrones great houses.
+
+olist_customers_dataset.csv
+This dataset has information about the customer and its location. Use it to identify unique customers in the orders dataset and to find the orders delivery location.
+At our system each order is assigned to a unique customerid. This means that the same customer will get different ids for different orders. The purpose of having a customerunique_id on the dataset is to allow you to identify customers that made repurchases at the store. Otherwise you would find that each order had a different customer associated with.
+
+olist_order_reviews_dataset.csv
+This dataset includes data about the reviews made by the customers.
+
+After a customer purchases the product from Olist Store a seller gets notified to fulfill that order. Once the customer receives the product, or the estimated delivery date is due, the customer gets a satisfaction survey by email where he can give a note for the purchase experience and write down some comments.
+
+
+olist_orders_dataset.csv
+This is the core dataset. From each order you might find all other information.
+
+olist_products_dataset.csv
+Products Dataset
+This dataset includes data about the products sold by Olist.
+
+
+# Overview
+Prediction systems play a cruical role in the modern world. With advent of technology and availability of data, these systems are being leveraged by retail chains, banks, colleges among other businesses. Depending on the use case, these systems are used to estimate delivery time, sales figures, carry out inventory management, predict occurrence of a disease, among others. 
+
+Inspired by what all problems these systems can solve, we have attempted to build a delivery prediction system based on publically available [dataset of orders made at Olist Store](https://www.kaggle.com/olistbr/brazilian-ecommerce), a Brazilian ecommerce.
+
+The dataset used here is hosted at [Kaggle website](https://www.kaggle.com). The dataset is provided by Olist itself, which is the largest department store in Brazilian marketplaces. Olist connects sellers to the customers. It is the sellers, who are responsible to fulfill any orders placed on the platform using Olist's logistic partners. 
+
+The dataset consists of **100,000+** orders and for each order the dataset contains related details like product bought and from which category, customer who bought and his/her location, seller involved and many more attributes.
+
+The delivery prediction system developed as part of the project, leverages the past orders, product category, delivery distance, customer location, actual delivery time and related attributes to predict delivery estimate for the new orders. 
+
+The goal of the project was to build a delivery prediction system which can estimate number of hours required for delivery keeping RMSE(Root mean square error) minimal. 
+
+In order to achieve this goal, we started by cleaning data, identifying right predictors, deriving insights from data already available to create new predictors. Once we had the dataset with us, we incrementally took a predictor, analysed its relationship with the number of hours of delivery, incorporated the predictor in our model after encoding, scaling it as required and tested our updated model against the test data. To ensure that the model performance was not due to random split of dataset, the model was trained and tuned using k fold cross validation and then only tested against the test dataset. Only if the predictor helped improve our metric i.e. RMSE, the predictor under analysis and evaluation was added to the model and the steps were repeated with new predictor. Otherwise the predictor was ignored
+
+This report walks through the approach, analysis and evaluation carried out to achieve our delivery prediction system
+
+# Analysis
+
+## Data Wrangling
+```{r Install or load packages,include=FALSE, echo = FALSE}
+# TODO use conditional loading or installation of library
+# Remove plotly related code for pdfs
+if (!require('dplyr')) install.packages('dplyr'); library('dplyr')
+if (!require('lubridate')) install.packages('lubridate'); library('lubridate')
+if (!require('tidyverse')) install.packages('tidyverse'); library('tidyverse')
+if (!require('geosphere')) install.packages('geosphere'); library('geosphere')
+if (!require('caret')) install.packages('caret'); library('caret')
+if (!require('randomForest')) install.packages('randomForest'); library('randomForest')
+if (!require('knitr')) install.packages('knitr'); library('knitr')
+```
+
+An important step in using any public data set is converting it to usable form. In our case, the data set was available in multiple csv files, each file dedicated to a specific kind of information. Example: 
+
+* There was a file for orders which had information about product bought, purchase time, delivery timestamp and other attributes. 
+* Then there was a file with product details which had information about product category, product weight and other attributes.
+
+Each of these files due to the varied dataset required different data wrangling steps to achieve a usable form which could then be unified for further analysis.
+
+### Data wrangling for products data set
+
+The data set here had product details like category name, dimensions and other attributes. Here the category name was in Portuguese. Some important attributes like product dimensions and weight were not populated for few of the products. To analyse this data properly, we carried out below steps:
+
+* Read the concerned csv file and removed irrelevant columns for the analysis.
+* Removed products where dimensions and related attributes were not available.
+* Assigned default category name of UNCATEGORIZED for products where product_category_name was not available.
+* Replaced product category names with English names where-ever mapping was available. The product categories for which equivalent English name mapping was not available were left untouched.
+
+```{r Data wrangling-products data set, include=FALSE, echo=FALSE}
+# read the data from source and remove irrelevant columns
+products_dataset <- read.csv(file.path('data','olist_products_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>%
+  select(-product_name_lenght,-product_description_lenght,-product_photos_qty)
+
+# check how they are structured
+products_dataset %>% head()
+products_dataset %>% str()
+
+# load the product category name translations
+product_category_name_translation <- read.csv(file.path('data','product_category_name_translation.csv'),header=TRUE,stringsAsFactors = FALSE)
+
+product_category_name_translation %>% head()
+
+# convert product_name to english form wherever possible. If not available, existing product category name is retained
+products_dataset <- products_dataset %>% 
+  left_join(product_category_name_translation,by='product_category_name') %>% 
+  mutate(product_category_name=if_else(is.na(product_category_name_english),
+                                       product_category_name,
+                                       product_category_name_english)) %>% 
+  select(-product_category_name_english) 
+
+# further remove products for which data is not available i.e is NA
+products_dataset <- products_dataset %>% 
+  filter(!is.na(product_weight_g) & !is.na(product_length_cm) & !is.na(product_height_cm) & !is.na(product_width_cm))
+
+# assign default category name of UNCATEGORIZED where-ever product_category_name is blank.
+products_dataset <- products_dataset %>%
+  mutate(product_category_name=if_else(product_category_name=='','UNCATEGORIZED',product_category_name))
+```
+
+The wrangled data looked like below:
+```{r Data wrangling result-products data set, echo=FALSE}
+products_dataset %>% head(2) %>% as.matrix()  %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Product data set')
+```
+
+### Data wrangling for orders data set
+
+The data set here had orders details like order id, associated customer, order status, purchase time, when was the order handed over to carrier, when was it delivered to customer and estimated delivery date and few other attributes.
+
+This was a crucial dataset not only for us to build our delivery estimation system but to even identify the current performance metric i.e. RMSE for the approach Olist was using.
+
+In order to leverage this dataset properly, we carried out below steps:
+
+* Read the concerned csv file and removed irrelevant columns for the analysis.
+* Parsed columns with date as characters and converted them to desired date type.
+* Filtered out any orders where delivery was not made or where delivery was made but required delivery time columns were not available.
+
+```{r Data wrangling-orders data set, include=FALSE, echo=FALSE}
+# order data set with various delivery related times
+# note each customer_id is unique per order
+# order_purchase_timestamp -> Shows the purchase timestamp.
+# order_approved_at/payment_approved_at -> Shows the payment approval timestamp.
+# order_delivered_carrier_date/handed_over_to_carrier_date -> Shows the order posting timestamp. When it was handled to the logistic partner.
+# order_delivered_customer_date --> Shows the actual order delivery date to the customer.
+# order_estimated_delivery_date --> Shows the estimated delivery date that was informed to customer at the purchase moment.
+orders_dataset <- read.csv(file.path('data','olist_orders_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% 
+  rename(payment_approved_at=order_approved_at,
+         handed_over_to_carrier_date=order_delivered_carrier_date)  %>% 
+  mutate(order_status=as.factor(order_status),
+         order_purchase_timestamp=as_datetime(order_purchase_timestamp),
+         payment_approved_at=as_datetime(payment_approved_at),
+         handed_over_to_carrier_date=as_datetime(handed_over_to_carrier_date),
+         order_delivered_customer_date=as_datetime(order_delivered_customer_date),
+         order_estimated_delivery_date=as_datetime(order_estimated_delivery_date))
+
+# TODO if we are not using payment_approved_at or few fields we can remove the filter logic based on that.
+orders_dataset <- orders_dataset %>% 
+  filter(order_status=='delivered') %>% 
+  filter( !is.na(order_estimated_delivery_date ) & !is.na(order_delivered_customer_date ) & !is.na(handed_over_to_carrier_date) & !is.na(payment_approved_at) & !is.na(order_purchase_timestamp))
+
+orders_dataset %>% head()
+orders_dataset %>% str()
+```
+
+The wrangled data looks like below:
+```{r Data wrangling result-orders dataset, echo=FALSE}
+orders_dataset %>% head(2) %>% as.matrix() %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Orders data set')
+```
+
+### Data wrangling for orders items data set
+
+The data set here had order item details like which product(s) were bought for a given order, who the seller was, price and freight value and shipping limit date. While most of the attributes were used to connect with other data sets, it was the shipping limit date which could be used along with product handed over to carrier date from orders dataset to identify any delays in the shipping process.
+
+In order to leverage this dataset properly, we carried out below steps:
+
+* Read the concerned csv file and removed irrelevant columns for the analysis.
+* Parsed columns with date as characters and converted them to desired date type.
+
+```{r Data wrangling-order items data set, include=FALSE, echo=FALSE}
+# orders data with item related seller info
+# order_item_id --->sequential number identifying number of items included in the same order.
+# so if there are three items they will be nuber 1 , 2, 3 for the given order
+# shipping_limit_date ---> Shows the seller shipping limit date for handling the order over to the logistic partner.
+# freight_value --> item freight value item (if an order has more than one item the freight value is splitted between items)
+order_items_dataset <- read.csv(file.path('data','olist_order_items_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(shipping_limit_date=as_datetime(shipping_limit_date))  %>% select(-order_item_id)
+
+order_items_dataset %>% str()
+order_items_dataset %>% head()
+```
+
+The wrangled data looks like below:
+```{r Data wrangling result-orders items dataset, echo=FALSE}
+order_items_dataset %>% head(2) %>% as.matrix() %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Order Items\' data set')
+```
+### Data wrangling for geolocation data set
+
+The data set here had geolocation data. It had zip code prefix, lat, lang, city and state details. However, there was no unique identifier in the dataset.
+
+It is important to note that  Brazil uses [Postal Code Address(CEP)](https://codigo-postal.org/en-us/brazil/) which is 8-digit number created mainly from mail distribution objective. It is split into two parts of 5 and 3 digits resp. separated by a hyphen('-'). The first part helps identify the rough delivery area, while it is the second part which provides precision and helps one reach the desired street, neighbourhood.
+
+So in the geolocation data set, zip code prefix refered to the first part of the CEP and it varied from 1 to 5 digits in the dataset available to us. Because the zip code prefix does not represent the precise value, it was not unique and had many duplicate values with varying value of lat, lng for same zip code prefix. 
+
+In order to be able to use this data with other data sets available like customer location and seller location datasets, which are discussed later, we carried out below steps:
+
+* Read the concerned csv file and removed irrelevant columns for the analysis.
+* Calculated the mean of lat, lng for given zip code prefix.
+
+```{r Data wrangling- geolocation data set, include=FALSE, echo=FALSE}
+# geo location details
+# in brazil while 5 digits zip code is good enough to identify state, it may not be correct to identify city
+# it can have geolocation_zip_code_prefix shared across multiple places
+# refer: https://codigo-postal.org/en-us/brazil/
+# The Postal Code Address (CEP) is an eight-digit number set that has by main objective to guide and accelerate the distribution of objects sent through the national mail in Brazil. The current structure of the Brazilian postal code is 8 (eight) digits, divided into two parts:
+
+# first part composed of 5 digits where each digit represents the 1) region, 2) sub-region, 3) sector, 4) subsector, 5) subsector divider;
+# the second part is composed of 3 digits, separated by a hyphen from the first part and represents the Distribution Identifiers.
+# You can navigate through states, then cities and finally neighborhoods and streets until you find the corresponding postal code.
+
+
+# geolocation_dataset <- read.csv(file.path('data','olist_geolocation_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) 
+geolocation_dataset <- read.csv(file.path('data','olist_geolocation_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% select(-geolocation_city,-geolocation_state) 
+
+
+geolocation_dataset %>% head()
+geolocation_dataset %>% str()
+
+
+# Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
+# intially we can see 
+# geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
+
+# post transformation to resolve any Accent or special characters from the city name
+# geolocation_dataset <- geolocation_dataset %>% mutate(geolocation_city=stri_trans_general(geolocation_city,"Any-ASCII"))
+
+# above is not done as the way zip codes are in brazil, first five digits can correspond to different cities and so we will remove the city. We also removed state as there seems to be incorrect entries in the sellers data. This either needs to be fixed or we can limit ourselves to lat/long value
+
+
+# geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
+
+# as each geolocation_zip_code_prefix can have many data points, we will limit these to one by taking mean for lat, long location
+geolocation_dataset <- geolocation_dataset %>% group_by(geolocation_zip_code_prefix) %>% summarise(geolocation_lat=mean(geolocation_lat),geolocation_lng=mean(geolocation_lng)) %>% ungroup()
+#geolocation_dataset <- geolocation_dataset %>% group_by(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% summarise(geolocation_lat=mean(geolocation_lat),geolocation_lng=mean(geolocation_lng)) %>% ungroup()
+
+# TODO review it
+#%>% mutate(geolocation_state=as.factor(geolocation_state)) 
+# TODO review if geolocation_zip_code_prefix and geolocation_city can have multiple states with them.
+
+# remove whitespace before and after reduces one city
+# still issues are there and can be seen by
+# zip_codes_of_interest <- geolocation_dataset %>% mutate(geolocation_city=str_trim(geolocation_city)) %>% dplyr::count(geolocation_zip_code_prefix) %>% filter(n>1)  %>% pull(geolocation_zip_code_prefix)
+
+# geolocation_dataset %>% filter(geolocation_zip_code_prefix %in% zip_codes_of_interest) %>% view()
+# to filter out duplicates
+# we need not worry about city or state, we can pick any as long as lat, lng values are similar
+```
+
+The wrangled data looks like below:
+```{r Data wrangling result-geolocation dataset, echo=FALSE}
+geolocation_dataset %>% head(2) %>% summarise_all(as.character) %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Geolocation data set')
+```
+
+### Data wrangling for customers and sellers data set
+
+There were two data sets one for customers and one for sellers. Apart from identifier ids like customer_unique_id, seller_id, both the datasets had similar columns i.e. zip code prefix, for which details were in geolocation data set and city and state.
+
+To be able to leverage either of these datasets for analysis later, we carried out below steps:
+
+* Read the concerned csv file and removed irrelevant columns for the analysis.
+* Combined sellers dataset data individually with geolocation dataset in order to capture seller lat,lng. Similar operation was carried out for customers data set.
+* Remove sellers or customers for which geolocation details are not available as delivery or even its estimation is not possible without the critical fields.
+
+```{r Data wrangling-customers data set, include=FALSE, echo=FALSE}
+# customers data set  with zip code prefix and can be used to uniquely identify a customer
+# customer_id ----> key to the orders dataset. Each order has a unique customer_id.
+# customer_zip_code_prefix --> first five digits of customer zip code
+customers_dataset <- read.csv(file.path('data','olist_customers_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(customer_zip_code_prefix=str_pad(customer_zip_code_prefix, c(5),pad=c('0'),side='right'))
+# %>% mutate(customer_zip_code_prefix=as.factor(customer_zip_code_prefix),customer_id=as.character(customer_id ))
+
+customers_dataset %>% head()
+customers_dataset %>% str()
+```
+
+```{r Data wrangling-sellers data set, echo=FALSE, include=FALSE}
+# seller data set with zip code prefix
+# seller_zip_code_prefix --> first 5 digits of seller zip code
+sellers_dataset <- read.csv(file.path('data','olist_sellers_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(seller_zip_code_prefix=str_pad(seller_zip_code_prefix, c(5),pad=c('0'),side='right'))
+# TODO review if we need it
+# %>% mutate(seller_zip_code_prefix=as.factor(seller_zip_code_prefix),seller_id=as.character(seller_id ))
+
+sellers_dataset %>% head()
+sellers_dataset %>% str()
+```
+
+```{r Refine sellers dataset, include=FALSE, echo=FALSE}
+# Filter out data where sellers location details are not available
+#
+# Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
+# These all need to be handled in data wrangling
+
+
+# we noticed some seller_zip_code_prefix are not present in geolocation dataset. So we will ignore them
+sellers_to_ignore <- sellers_dataset %>% anti_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) 
+
+order_items_dataset %>% inner_join(sellers_to_ignore,by='seller_id') %>% nrow()
+# while there are decent number of order items for the concerned sellers, we will ignore them as we will still have sufficient data for analysis.
+
+
+# let's use the one of interest
+sellers_dataset <- sellers_dataset %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_seller=geolocation_lat,geolocation_lng_seller=geolocation_lng)
+
+# TODO there seems to be an issue (Should be resolved now)
+# geolocation_dataset seems to have 4 entries for same zip code . example 13454
+# sellers_dataset %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% dplyr::count(seller_id) %>% slice_max(order_by=n,n=5)
+
+# we tried another approach by joining over all zip codee, city and state but it led to no match
+# sellers_dataset %>% mutate(seller_city=stri_trans_general(seller_city,"Any-ASCII")) %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix','seller_city'='geolocation_city','seller_state'='geolocation_state')) %>% str()
+# TODO -- if we analyse we can see city and state for seller data differ in both datasets. so best to stick to zip code. city and state are prone to errors.
+# we decided against using city and state.
+```
+
+The wrangled sellers dataset looks like below:
+```{r Refined sellers dataset result, echo=FALSE}
+sellers_dataset %>% head(2) %>% as.matrix()  %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Sellers data set')
+```
+
+
+```{r Refine customers data set, include=FALSE, echo=FALSE}
+# similarly let see customers for whom we don't have data in geolocation_dataset
+customers_to_ignore <- customers_dataset %>% anti_join(geolocation_dataset,by=c('customer_zip_code_prefix'='geolocation_zip_code_prefix')) 
+
+
+orders_dataset %>% inner_join(customers_to_ignore,by='customer_id') %>% nrow()
+# while there are decent number of orders for these customers, we will ignore them as we will still have sufficient data for analysis.
+
+# let's use customers of interest
+customers_dataset <- customers_dataset %>% inner_join(geolocation_dataset,by=c('customer_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_customer=geolocation_lat,geolocation_lng_customer=geolocation_lng) 
+```
+
+The wrangled customers dataset looks like below:
+```{r Refined customers dataset result, echo=FALSE}
+customers_dataset %>% head(2) %>% as.matrix()  %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Customers data set')
+```
+
+
+```{r Combine data sets, include=FALSE, echo=FALSE}
+# we can combine orders delivery information (orders_dataset) with orders items and seller related info (order_items_dataset)
+# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% head()
+
+# let's combine with seller details
+# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% head()
+
+# let's combine with unique customer and its location dataset
+# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head()
+
+# let's combine with products data as well
+# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% inner_join(products_dataset,by='product_id') %>% select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-customer_state) %>% head()
+
+# so raw data
+raw_data <- orders_dataset %>% 
+  inner_join(order_items_dataset,by='order_id') %>%
+  inner_join(sellers_dataset,by='seller_id') %>% 
+  inner_join(customers_dataset,by='customer_id') %>%  
+  inner_join(products_dataset,by='product_id') %>%
+  mutate(order_purchase_timestamp=as.numeric(order_purchase_timestamp),
+         product_id=as.factor(product_id), 
+         seller_id=as.factor(seller_id),
+         seller_zip_code_prefix=as.factor(seller_zip_code_prefix),
+         customer_unique_id=as.factor(customer_unique_id),
+         customer_zip_code_prefix=as.factor(customer_zip_code_prefix),
+         product_category_name=as.factor(product_category_name)) %>%
+  select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city, -payment_approved_at,-order_id,-product_id,-seller_zip_code_prefix,-customer_unique_id)
+```
+
+Performance metric
+```{r RMSE, echo=FALSE}
+RMSE <- function(true_outcomes, predicted_outcomes) {
+  sqrt(mean((true_outcomes - predicted_outcomes)^2))
+}
+```
+
+```{r Current RMSE, include=FALSE, echo = FALSE}
+# current RMSE can be calculated by finding number of hours for predicted delivery time given by order_estimated_delivery_date vs actual outcome/number of hours give by order_delivered_customer_date
+# However, note that order_estimated_delivery_date has no timestamp, so we will remove timestamp component, round date using floor_date, which means any delivery done during the day say at 2017-10-10 21:25:13 is treated to be done on 2017-10-10
+
+# first we convert it to desired date
+# then we covert date to numeric i.e. to convert it to seconds
+# then we calculate time_taken_from_order_to_delivery, estimated_time_from_order_to_delivery in seconds
+data_for_rmse <- raw_data %>%
+  select(order_purchase_timestamp,order_delivered_customer_date,order_estimated_delivery_date) %>%
+  mutate(order_delivered_customer_date_low=floor_date(order_delivered_customer_date,unit="day"),
+         order_delivered_customer_date_high=ceiling_date(order_delivered_customer_date,unit="day")) %>% 
+  mutate(order_delivered_customer_date_low=as.numeric(order_delivered_customer_date_low),
+         order_delivered_customer_date_high=as.numeric(order_delivered_customer_date_high),
+         order_estimated_delivery_date=as.numeric(order_estimated_delivery_date))  %>%
+  mutate(time_taken_from_order_to_delivery_rangemax=order_delivered_customer_date_high-order_purchase_timestamp,
+         time_taken_from_order_to_delivery_rangemin=order_delivered_customer_date_low-order_purchase_timestamp,
+         estimated_time_from_order_to_delivery=order_estimated_delivery_date-order_purchase_timestamp) %>% 
+  mutate(estimated_time_from_order_to_delivery=estimated_time_from_order_to_delivery/3600,
+         time_taken_from_order_to_delivery_rangemax = time_taken_from_order_to_delivery_rangemax/3600,
+         time_taken_from_order_to_delivery_rangemin = time_taken_from_order_to_delivery_rangemin/3600) %>%
+  select(estimated_time_from_order_to_delivery,time_taken_from_order_to_delivery_rangemax,time_taken_from_order_to_delivery_rangemin)
+
+
+RMSE_value_based_on_max <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemax,data_for_rmse$estimated_time_from_order_to_delivery)
+# 359.9466
+
+RMSE_value_based_on_min <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemin,data_for_rmse$estimated_time_from_order_to_delivery)
+# 377.9515
+
+# if we look at graph we can  see there is huge difference between estimated data and actual delivery date
+# it is possible some products are bulky or require differen mode of transport like ship 
+data_for_rmse %>% mutate(diff=estimated_time_from_order_to_delivery-1/2*(time_taken_from_order_to_delivery_rangemax+time_taken_from_order_to_delivery_rangemin)) %>% ggplot(aes(diff)) + geom_histogram(binwidth = 24*2) + xlab('Estimation error where each bar represents 2 days')
+
+rm(data_for_rmse)
+```
+
+Final wrangled data looks like below:
+```{r Prepare final wrangled data set, include=FALSE}
+# we will predict number of hours to deliver based on various predictors. This seems more appropriate. Though as a result of this, we won't be able to use night, day time data of purchase which may influence delivery time (say to carrier it is informed only next day)
+wrangled_data <- raw_data %>%
+  mutate(order_delivered_customer_date=as.numeric(order_delivered_customer_date)) %>%
+  mutate(number_of_hours=(order_delivered_customer_date-order_purchase_timestamp)/3600) %>%
+  select(-order_purchase_timestamp,-order_delivered_customer_date,-order_estimated_delivery_date)
+```
+
+Having wrangled the datasets individually we combined them into a single dataset. While the dataset had many attributes, based on their frequency and analysis, we zeroed on the below fields. In addition, it is important to note that for model development we created outcome column number_of_hours based on existing fields i.e. order_delivered_customer_date and order_purchase_timestamp as this is what we would want to predict whenever we get a new order i.e. given this order, how many number of hours are required to deliver the product to the customer.
+
+
+```{r Final wrangled data,echo=FALSE}
+wrangled_data %>% head(2) %>% as.matrix()  %>% t() %>% 
+  knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Final wrangled data set')
+```
+
+
+Calculating current performance metric i.e. RMSE.
+```{r Range of current rmse, echo=FALSE}
+data.frame(type=character(),value=numeric()) %>% 
+  add_row(type='RMSE Max',value=RMSE_value_based_on_max) %>% 
+  add_row(type='RMSE Min',value=RMSE_value_based_on_min) %>% 
+  knitr::kable(caption='Current RMSE')
+```
+
+
+```{r Cleanup and save required dataset, include=FALSE, echo=FALSE}
+save(wrangled_data,file='rda/wrangled_data.rda')
+rm(geolocation_dataset, order_items_dataset, orders_dataset, product_category_name_translation, products_dataset, sellers_dataset, sellers_to_ignore, customers_dataset, customers_to_ignore)
+# TODO delete raw_data as well.
+```
+
+
+Delivery Performance:
+
+You will also be able to work through delivery performance and find ways to optimize delivery times.
+
+Let's predict delivery time/date
+-- delivery distance
+-- location of customer as some can be remotely connected and need special delivery merchanism. This is independent of delivery distance.
+-- location of seller as shipping from some locations maybe difficult. This is independent of delivery distance.
+-- size of product? 
+-- weight of the product. Heavier products may take time to deliver
+-- price of product (expensive nature of product as it could mean extra care or it maybe fragile?)
+-- purchase time....if in night, delivery time maybe longer
+-- order approved at time-> if payment approval came multiple hours after purchase time, this maybe longer
+-- product category -- products of same category may show similar behavior.
+-- or specific product - some products may have higher delivery time.
+-- deliveries maybe impacted due to sales, festival season.
+
+we should consider if we need time stamp or we can take purchase time as 0 and calculated approved at from it. though we may lose granularity in terms of time as truck may come everyday at 4. so after 4 you can ship , before 4 you cant
+We can be agnostic to purchase time and just predict number of hours for delivery for given purchase.
+
+
+estimated delivery date is present in ---> order_estimated_delivery_date
+We can calculate RMSE using that and it will be our benchmark
+
+We can see if we improved than that or not. It will give us indication of how close are we to the production model RMSE.
+
+
+TODO -> if there is delayed to carrier precendence, we could use that probability and average delay to carrier to fine tune our results. Similarly we could use other metrics like payment approval time etc.
+
+
+
+
+
+
+
+
+TODO
+Use target encoding for categorical variables
+Use preprocess for scaling data against training data set. Then use mean, sd from this trained data for test data.
+
+
+
+Derived data set should be generated later on observations
+- geolocation usage to capture distance
+- delay and mean delay in handling to carrier
+- number of hours for delivery should be generated later
+```{r Method to derive distance data, include = FALSE}
+# we will use distGeo from geosphere package to compute distance in km between seller and customer. considered to be highly accurate. if it takes more time, we can consider using distVincentyEllipsoid or distHaversine as we are fine with accuracy of a km.
+extract_distance_between_seller_customer <- function(df) { 
+  df %>% mutate(distance_between_two_points=round(distGeo(
+    matrix(c(geolocation_lng_seller,geolocation_lat_seller),ncol=2),
+    matrix(c(geolocation_lng_customer,geolocation_lat_customer),ncol=2)
+    )/1000,2
+    )) %>% select(-geolocation_lat_customer,-geolocation_lng_customer,-geolocation_lat_seller,-geolocation_lng_seller)
+}
+```
+
+```{r Method to reduce levels in customer_zip_code_prefix, include = FALSE}
+# trimming zip code to three digits to be able to extract zip code component which represents region, sub-region and sector data.
+compute_rough_customer_location <- function(df) {
+  df %>% mutate(customer_zip_code_prefix=str_pad(customer_zip_code_prefix, c(3),pad=c('0'),side='right')) %>% 
+    mutate(customer_loc = as.numeric(str_extract(customer_zip_code_prefix,"\\d\\d\\d"))) 
+  #%>% select(-customer_zip_code_prefix)
+}
+```
+
+```{r Method to derive delay in handover to carrier, include = FALSE}
+# calculated in hours
+get_delay_in_handover_to_carrier_per_seller_id <- function(df) {
+  df %>% mutate(delay= (as.numeric(handed_over_to_carrier_date) -as.numeric(shipping_limit_date))/3600)  %>% 
+    group_by(seller_id) %>% 
+    summarise(mean_delay_in_handover=mean(delay))
+}
+```
+
+```{r Get delay in payment approval based on customer zip code prefix, include = FALSE}
+# calculated in hours
+# can be due to fraud check etc.
+get_delay_in_payment_approval_per_customer_zip_code <- function(df) {
+  df %>% mutate(payment_approved_at=as.numeric(payment_approved_at)) %>%
+    mutate(time_to_approve_payment_hours=(payment_approved_at-order_purchase_timestamp)/3600) %>% 
+    group_by(customer_zip_code_prefix) %>% 
+    summarise(mean_time_to_approve_payment_hours=mean(time_to_approve_payment_hours))
+}
+
+```
+
+```{r Method to compute volume from available fields, include = FALSE}
+# compute volume
+compute_volume_using_product_info <- function(df) {
+  df %>% mutate(volume=product_length_cm*product_height_cm*product_width_cm) %>%
+    select(-product_length_cm,-product_height_cm,-product_width_cm)
+}
+```
+
+## Paritioning dataset for training and validation  
+
+Before using the wrangled data for analysis and data modeling, we partitioned the data into training and validation data sets. The idea was to keep validation data set aside and use only training data for any analysis, model development and tuning. 
+
+A split of 80/20 was made here between training and validation set to ensure we have enough data points to train and validate the results. Secondly, the split was done such that distribution of outcome
+
+
+The data sets were named as below for furture reference:
+
+* training data set as **edx** 
+* validation data set as **validation**
+
+Split data into training and validation set, where validation set will be used later
+```{r Split data into training and validation set, include = FALSE, echo = FALSE}
+set.seed(1,sample.kind = 'Rounding')
+test_indices <- createDataPartition(wrangled_data$number_of_hours,times=1,p=0.2,list=FALSE)
+
+training_dataset <- wrangled_data[-test_indices,]
+validation_dataset <- wrangled_data[test_indices,]
+
+# ensure validation_dataset has products only for concerned product categories and seller_ids which are in training_dataset 
+validation_dataset <- validation_dataset %>%
+  semi_join(training_dataset,by='product_category_name') %>%
+  semi_join(training_dataset,by='seller_id') %>% 
+  semi_join(training_dataset,by="customer_zip_code_prefix")
+## TODO review if we want to change this join
+# validation_dataset <- validation_dataset %>% semi_join(training_dataset,by='seller_id')
+
+rm(test_indices)
+```
+
+
+We use training_dataset and split into into train and test set. So that training_dataset is sufficient to fine tune the model
+```{r Split data for training, include=FALSE}
+# Let's split training_dataset into two parts
+set.seed(1,sample.kind = 'Rounding')
+training_dataset <- training_dataset %>% compute_volume_using_product_info() %>% extract_distance_between_seller_customer() %>% compute_rough_customer_location()
+
+test_indices <- createDataPartition(training_dataset$number_of_hours,times=1,p=0.2,list=FALSE)
+
+train_subset <- training_dataset[-test_indices,]
+test_subset <- training_dataset[test_indices,]
+# ensure test_subset has products only for concerned product categories and seller_ids which are in train_subset
+test_subset <- test_subset %>% semi_join(train_subset,by='product_category_name') %>% semi_join(train_subset,by='seller_id') %>% 
+  semi_join(train_subset,by="customer_zip_code_prefix")
+#test_subset <- test_subset %>% semi_join(train_subset,by='seller_id')
+
+penalty_data <- train_subset %>% get_delay_in_handover_to_carrier_per_seller_id()
+
+rm(test_indices)
+```
+
+
+Regression problem.
+Algorithms considered
+- Random Forest
+- knn - k nearest neighbors 
+- gam
+
