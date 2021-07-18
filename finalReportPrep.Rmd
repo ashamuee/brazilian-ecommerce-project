@@ -6,6 +6,7 @@ output:
   pdf_document: default
   html_document:
     df_print: paged
+urlcolor: blue
 ---
 
 ```{r setup, include=FALSE}
@@ -13,11 +14,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Overview
-Prediction systems play a cruical role in the modern world. With advent of technology and availability of data, these systems are being leveraged by retail chains, banks, colleges among other businesses. Depending on the use case, these systems are used to estimate delivery time, sales figures, carry out inventory management, predict occurrence of a disease, among others. 
+Prediction systems play a crucial role in the modern world. With advent of technology and availability of data, these systems are being leveraged by retail chains, banks, colleges among other businesses. Depending on the use case, these systems are used to estimate delivery time, sales figures, carry out inventory management, predict occurrence of a disease etc. 
 
-Inspired by what all problems these systems can solve, we have attempted to build a delivery prediction system based on publically available [dataset of orders made at Olist Store](https://www.kaggle.com/olistbr/brazilian-ecommerce), a Brazilian ecommerce.
+Inspired by what all problems these systems can solve, we have attempted to build a delivery prediction system based on publicaly available [dataset of orders made at Olist Store](https://www.kaggle.com/olistbr/brazilian-ecommerce), a Brazilian e-commerce.
 
-The dataset used here is hosted at [Kaggle website](https://www.kaggle.com). The dataset is provided by Olist itself, which is the largest department store in Brazilian marketplaces. Olist connects sellers to the customers. It is the sellers, who are responsible to fulfill any orders placed on the platform using Olist's logistic partners. 
+The dataset used here is hosted at [Kaggle website](https://www.kaggle.com). The dataset is provided by Olist itself, which is the largest department store in Brazilian marketplaces. Olist connects sellers to the customers. It is the sellers, who are responsible to fulfil any orders placed on the platform using Olist's logistic partners. 
 
 The dataset consists of **100,000+** orders and for each order the dataset contains related details like product bought and from which category, customer who bought and his/her location, seller involved and many more attributes.
 
@@ -174,7 +175,7 @@ The data set here had geolocation data. It had zip code prefix, lat, lang, city 
 
 It is important to note that  Brazil uses [Postal Code Address(CEP)](https://codigo-postal.org/en-us/brazil/) which is 8-digit number created mainly from mail distribution objective. It is split into two parts of 5 and 3 digits resp. separated by a hyphen('-'). The first part helps identify the rough delivery area, while it is the second part which provides precision and helps one reach the desired street, neighbourhood.
 
-So in the geolocation data set, zip code prefix refered to the first part of the CEP and it varied from 1 to 5 digits in the dataset available to us. Because the zip code prefix does not represent the precise value, it was not unique and had many duplicate values with varying value of lat, lng for same zip code prefix. 
+So in the geolocation data set, zip code prefix referred to the first part of the CEP and it varied from 1 to 5 digits in the dataset available to us. Because the zip code prefix does not represent the precise value, it was not unique and had many duplicate values with varying value of lat, lng for same zip code prefix. 
 
 In order to be able to use this data with other data sets available like customer location and seller location datasets, which are discussed later, we carried out below steps:
 
@@ -202,7 +203,7 @@ geolocation_dataset %>% str()
 
 
 # Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
-# intially we can see 
+# initially we can see 
 # geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
 
 # post transformation to resolve any Accent or special characters from the city name
@@ -345,9 +346,8 @@ raw_data <- orders_dataset %>%
          seller_id=as.factor(seller_id),
          seller_zip_code_prefix=as.factor(seller_zip_code_prefix),
          customer_unique_id=as.factor(customer_unique_id),
-         customer_zip_code_prefix=as.factor(customer_zip_code_prefix),
          product_category_name=as.factor(product_category_name),
-         customer_zip_code_prefix=str_pad(customer_zip_code_prefix, c(5),pad=c('0'),side='right')) %>%
+         customer_zip_code_prefix=str_pad(customer_zip_code_prefix, c(5),pad=c('0'),side='left')) %>% 
   select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-order_id,-product_id,-seller_zip_code_prefix,-customer_unique_id)
 ```
 
@@ -403,7 +403,7 @@ wrangled_data <- raw_data %>%
   select(-order_delivered_customer_date,-order_estimated_delivery_date)
 ```
 
-Having wrangled the datasets individually we combined them into a single dataset. While the dataset had many attributes, based on their frequency and analysis, we zeroed on the below fields. In addition, it is important to note that for model development we created outcome column number_of_hours based on existing fields i.e. order_delivered_customer_date and order_purchase_timestamp as this is what we would want to predict whenever we get a new order i.e. given this order, how many number of hours are required to deliver the product to the customer.
+Having wrangled the datasets individually we combined them into a single dataset. While the dataset had many attributes, based on their frequency and our intuition shared earlier we zeroed on the below fields for further consideration. In addition, it is important to note that for model development we created outcome column number_of_hours based on existing fields i.e. order_delivered_customer_date and order_purchase_timestamp as this is what we would want to predict whenever we get a new order i.e. given this order, how many number of hours are required to deliver the product to the customer.
 
 The wrangled dataset after incorporating various datasets available to us looked like below:
 ```{r Final wrangled data,echo=FALSE}
@@ -411,7 +411,7 @@ wrangled_data %>% head(2) %>% as.matrix()  %>% t() %>%
   knitr::kable(col.names=c('Example Value1','Example Value2'), caption='Final wrangled data set')
 ```
 
-### Performance Metric
+## Performance Metric
 
 Before we dived into building our delivery prediction system, we identified our metric of choice i.e. RMSE for evaluating current delivery estimates being made by Olist and for comparing our delivery prediction system against that, in addition to improving our system as we built it.
 
@@ -420,13 +420,13 @@ Before we dived into building our delivery prediction system, we identified our 
     + Here, $\hat{y}$ is the prediction. In context of this project, predicted number of hours for delivering the order item,
     + and y is the actual outcome. In context of this project, actual number of hours taken for delivering the order item.
 
-#### Current RMSE
+### Current RMSE
 
 Before we dived into building our delivery prediction system, we looked into current RMSE. To calculate this, we leveraged order_estimated_delivery_date i.e. estimated delivery date and order_delivered_customer_date i.e. actual delivery timestamp, which was available in orders data set.
 
 While order_estimated_delivery_date did not have time details, order_delivered_customer_date did. Since order_delivered_customer_date could be rounded off to same day or next day, we computed range of RMSE which can be calculated using either of the approach.
 
-This RMSE i.e. our performance metric was later used as benchmark for modeling. The delivery prediction system being built attempted to improve on this metric.
+This RMSE i.e. our performance metric was later used as benchmark for modelling. The delivery prediction system being built attempted to improve on this metric.
 
 Below were the current RMSE calculations based on how we interpret the actual delivery timestamp.
 ```{r Range of current rmse, echo=FALSE}
@@ -458,9 +458,7 @@ extract_distance_between_seller_customer <- function(df) {
 ```{r Method to reduce levels in customer_zip_code_prefix, include = FALSE}
 # trimming zip code to three digits to be able to extract zip code component which represents region, sub-region and sector data.
 compute_rough_customer_location <- function(df) {
-  df %>% mutate(customer_zip_code_prefix=str_pad(customer_zip_code_prefix, c(3),pad=c('0'),side='right')) %>% 
-    mutate(customer_loc = as.numeric(str_extract(customer_zip_code_prefix,"\\d\\d\\d"))) 
-  #%>% select(-customer_zip_code_prefix)
+  df %>% mutate(customer_loc = as.numeric(str_extract(customer_zip_code_prefix,"\\d\\d\\d"))) 
 }
 ```
 
@@ -492,13 +490,13 @@ compute_volume_using_product_info <- function(df) {
 }
 ```
 
-## Paritioning dataset for training and validation  
+## Partitioning dataset for training and validation  
 
-Before using the wrangled data for analysis and data modeling, we partitioned the data into training and validation data sets. The idea was to keep validation data set aside and use only training data for any analysis, model development and tuning. 
+Before using the wrangled data for analysis and data modelling, we partitioned the data into training and validation data sets. The idea was to keep validation data set aside and use only training data for any analysis, model development and tuning. 
 
 A split of 80/20 was made here between training and validation set to ensure we have enough data points to train and to validate the results. Secondly, the split was done such that distribution of outcome i.e. number_of_hours was similar in both training and test data.
 
-The data sets were named as below for furture reference:
+The data sets were named as below for future reference:
 
 * training data set as **training_dataset** 
 * validation data set as **validation_dataset**
@@ -529,54 +527,8 @@ Below were the details about the elements in each of the partitioned datasets.
 data.frame(data_set=c("Training data set","Validation data set"),name=c('training_dataset','validation_dataset'), count=c(nrow(training_dataset),nrow(validation_dataset))) %>% knitr::kable()
 ```
 
-For analysis, we used only the training dataset.
-
-Since we needed to build delivery prediction system which could estimate number of hours required for delivery for new orders, while maintaining minimum RMSE, we used our intution and understanding of the domain to guide us in deriving insights from available predictors. The same are shared below:
-
-* _**Distance between seller and customer**_ could likely influence delivery estimate.
-* _**Delay in payment approval**_ could influence delivery time as it would delay shippment from the seller. This could be related to customer zip code as often some customer locations require fraud analysis before payment is approved.
-* _**Delay in handover of product**_ from seller to carrier would influence delivery time as any time spent there is wasted. This could be seller related as some sellers maybe known to take more time in processing order compared to other sellers. 
-* Some _**customer locations**_ maybe difficult to reach or need special delivery mechanism due to their remote nature. Such locations may need more delivery time compared to other locations irrespective of the distance involved. We need not analyse for each customer location but a rough area could be used based on combination of zip codes.
-* _**Weight of the product**_ could influence delivery time as heavy items say bed, furniture may be transported slowly while lighter items maybe shipped more quickly.
-* _**Price of the product**_ could influence delivery time. Expensive items may require considerable more attention and could influence delivery like priority shipping or longer delivery time due to caution.
-* _**Volume of the product**_ could influence delivery time as smaller products can be shipped together while others may need separate truck and therefore more time for dedicated truck to be available.
-* _**Product category**_ could be used for analysis as different product categories would have different packing, assembly, processing requiremts and shelf life would could lead to impact in delivery time. 
-* _**Freight value**_ could indicate complexity of shipping like fragility of the product, distance, toll booth charges on the way among others. This could be considered for analysis.
-* _**Customer state**_ could influence the delivery estimate due to state border checks, paper work before goods delivery among others.
-* Different _**sellers**_ may take different amount of time or sell specific type of products which may require different shipping time. So products from a seller selling apparels may be delivered quickly while products from one selling customised products or say furniture may take relatively more time. This could be useful information for predicting delivery time.
-
-
-
-
-
-
-
-
-
-
-
-
-
-To start building our algorithm, we further paritioned our training data set i.e. training_dataset into a split of 80/20 between train_subset and test_subset to ensure we use only the train_subset for training and tuning the model and test_subset to evaluate the model and measure RMSE. This would ensure there is no data leak. The split like earlier was done such that distribution of outcome i.e. number_of_hours was similar in both training and test data
-
-
-
-
-
-
-
-TODO
-Use target encoding for categorical variables
-Use preprocess for scaling data against training data set. Then use mean, sd from this trained data for test data.
-
-
-Derived data set should be generated later on observations
-- geolocation usage to capture distance
-- delay and mean delay in handling to carrier
-- number of hours for delivery should be generated later
-
-We use training_dataset and split into into train and test set. So that training_dataset is sufficient to fine tune the model
 ```{r Split data for training, include=FALSE}
+# We use training_dataset and split into into train and test set. So that training_dataset is sufficient to fine tune the model, identify weights for target encoding of categorical variables etc.
 # Let's split training_dataset into two parts
 set.seed(1,sample.kind = 'Rounding')
 training_dataset <- training_dataset %>% compute_volume_using_product_info() %>% extract_distance_between_seller_customer() %>% compute_rough_customer_location()
@@ -595,10 +547,6 @@ test_subset <- test_subset %>% semi_join(train_subset,by='product_category_name'
 rm(test_indices)
 ```
 
-
-==TODO note penalty data should be calculated again if train_subset is changed. Only trained data should be used for test, so that there is no data leak.
-
-== TODO additive smoothing/Bayes estimator with target encoding
 
 ```{r Dataframe to store target encoding weights, include=FALSE}
 target_encoding_weights <- data.frame(effect=character(0),weight=double(0)) 
@@ -1018,17 +966,226 @@ prepare_data_for_training_testing <- function(train_ds, test_ds, cleanup) {
 }
 ```
 
+== TODO additive smoothing/Bayes estimator with target encoding
 
-### Product category effects
-As part of this section, we looked into our intution that different product categories may have different delivery timelines and explored its influence by incoporating it in our model for analysis.
+## Feature Analysis and Selection
+Since we needed to build delivery prediction system which could estimate number of hours required for delivery for new orders, while maintaining minimum RMSE, we used our intuition and understanding of the domain to guide us in deriving insights from available predictors. The same are shared below:
 
-Since product categories are categorical in nature, we applied target encoding on the product categories attribute. 
+* _**Distance between seller and customer**_ could likely influence delivery estimate.
+* _**Delay in payment approval**_ could influence delivery time as it would delay shipment from the seller. This could be related to customer zip code as often some customer locations require fraud analysis before payment is approved.
+* _**Delay in handover of product from seller to carrier**_ would influence delivery time as any time spent there is wasted. This could be seller related as some sellers maybe known to take more time in processing order compared to other sellers. 
+* Some _**customer locations**_ maybe difficult to reach or need special delivery mechanism due to their remote nature. Such locations may need more delivery time compared to other locations irrespective of the distance involved. We need not analyse for each customer location but a rough area could be used based on combination of zip codes.
+* _**Weight of the product**_ could influence delivery time as heavy items say bed, furniture may be transported slowly while lighter items maybe shipped more quickly.
+* _**Price of the product**_ could influence delivery time. Expensive items may require considerable more attention and could influence delivery like priority shipping or longer delivery time due to caution.
+* _**Volume of the product**_ could influence delivery time as smaller products can be shipped together while others may need separate truck and therefore more time for dedicated truck to be available.
+* _**Product category**_ could be used for analysis as different product categories would have different packing, assembly, processing requirements and shelf life would could lead to impact in delivery time. 
+* _**Freight value**_ could indicate complexity of shipping like fragility of the product, distance, toll booth charges on the way among others. This could be considered for analysis.
+* _**Customer state**_ could influence the delivery estimate due to state border checks, paper work before goods delivery among others.
+* Different _**sellers**_ may take different amount of time or sell specific type of products which may require different shipping time. So products from a seller selling apparels may be delivered quickly while products from one selling customised products or say furniture may take relatively more time. This could be useful information for predicting delivery time.
 
-===TODO talk about weight
-===TODO talk about need of regularization.
+For analysis, we used only the training_dataset or subset of it, ensuring validation_dataset was left untouched. 
 
-Below histogram depicts how mean rating of movie across movies is distributed.
+### Derived features
 
+#### Distance between seller and customer feature
+As part of the dataset we had customer and seller location details available in the form of latitude(lat), longitude(lng). We used this crucial knowledge of their location to determine shortest distance between the two on an ellipsoid.
+
+We decided to look more into this intuition. For this we plotted numbers of hours taken for delivery against the distance between seller and the customer. In order to see the trend in this over-plotted graph, gam method based smoothing curve was also plotted on the graph.
+
+```{r Explore distance_between_two_points relation with number_of_hours, echo=FALSE, message=FALSE}
+training_dataset  %>% ggplot(aes(distance_between_two_points,number_of_hours)) + geom_point() + geom_smooth() + xlab('Distance between seller and the customer') + ylab('Number of hours taken for delivery')
+```
+In above plot, we noted that number of hours taken for delivery showed stronger correlation for smaller distances. However, once delivery distance increased beyond a threshold, the correlation weakened between the fields. Though, we could see broader confidence interval for larger distances.
+
+```{r correlation analysis for distance_between_two_points with number of hours, echo=FALSE}
+# correlation analysis for distance_between_two_points with number of hours
+
+analysis_output_rows <- sapply(seq(0,2000,1000), function(offset) {  
+  list(delay_limit=str_c('>=',offset,' & <',offset+1000),
+       correlation=cor(training_dataset %>% 
+                         filter(distance_between_two_points>=offset & distance_between_two_points< offset+1000) %>% 
+                         pull(distance_between_two_points), 
+                       training_dataset %>% 
+                         filter(distance_between_two_points>=offset & distance_between_two_points< offset+1000) %>% 
+                         pull(number_of_hours))) 
+  },simplify=TRUE)
+
+analysis_output_rows %>% t() %>% rbind( c(str_c('>=',3000),
+                          round(cor(training_dataset %>% 
+                                      filter(distance_between_two_points>=3000) %>%
+                                      pull(distance_between_two_points), 
+                                    training_dataset %>% 
+                                      filter(distance_between_two_points>=3000) %>%
+                                      pull(number_of_hours)),7))
+                        ) %>% as.data.frame() %>% knitr::kable(caption='Correlation analysis between distance between seller & carrier and number of hours taken for delivery')
+
+rm(analysis_output_rows)
+```
+This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model. 
+
+#### Delay in handover of product from seller to carrier feature
+As part of the dataset, there were two important attributes i.e. handed_over_to_carrier_date and shipping_limit_date. Here, handed_over_to_carrier_date is the actual timestamp when product ordered was handed over the carrier for delivery. While, shipping_limit_date is the date by which seller should handover the order to the carrier.
+
+Together these fields were considered useful as they could be used to understand if there was a delay or not in handing over product ordered by seller to the carrier. Also, this delay or early handover, could influence delivery timeline even if everything else was to take the same time.
+
+We decided to look more into this intuition. For this, the feature i.e mean_delay_in_handover was computed for each seller. The computed data was then joined with training_dataset and the below graph was used to visualize the relation between delay in handover to carrier and number of hours taken for delivery. In order to see the trend in this over-plotted graph, gam method based smoothing curve was also plotted on the graph.
+
+```{r Explore delay_in_handover_to_carrier relation with number_of_hours, echo=FALSE, message=FALSE}
+delay_in_handover_to_carrier_analysis_dataset <- training_dataset %>%
+  get_delay_in_handover_to_carrier_per_seller_id()
+
+analysis_joined_data <- training_dataset %>%
+  left_join(delay_in_handover_to_carrier_analysis_dataset,by='seller_id')
+
+analysis_joined_data %>% ggplot(aes(mean_delay_in_handover,number_of_hours)) + geom_point() + geom_smooth() + xlab('Delay in handover of product to carrier') + ylab('Number of hours taken for delivery')
+```
+
+In above plot, we noted that number of hours taken for delivery shows weaker correlation with  delay in handover by seller to the carrier as long as the ordered product is handed over to carried before the shipping_limit_date. However, post the date, we could see relatively stronger correlation between the fields. 
+
+```{r correlation analysis for mean_delay_in_handover with number of hours, echo=FALSE}
+# correlation analysis for mean_delay_in_handover with number of hours
+data.frame(delay_limit=character(0),correlation=numeric(0)) %>% 
+  add_row(delay_limit='<= 0',correlation=cor(analysis_joined_data %>% 
+                                               filter(mean_delay_in_handover<= 0) %>% 
+                                               pull(mean_delay_in_handover), 
+                                             analysis_joined_data %>% 
+                                               filter(mean_delay_in_handover<= 0) %>% 
+                                               pull(number_of_hours))
+          ) %>% 
+  add_row(delay_limit='> 0',correlation=cor(analysis_joined_data %>% 
+                                              filter(mean_delay_in_handover> 0) %>% 
+                                              pull(mean_delay_in_handover), 
+                                            analysis_joined_data %>% 
+                                              filter(mean_delay_in_handover> 0) %>% 
+                                              pull(number_of_hours))) %>% 
+  knitr::kable(caption='Correlation analysis between delay in handover to carrier and number of hours taken for delivery')
+```
+
+This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model. However, as for new orders this information would not be available at time of placing the order, we were required to compute this feature using training data and apply the captured learnings later on test data. 
+
+To be able to do this, as shared earlier, the feature i.e. mean_delay_in_handover was computed for each seller based on training dataset and then applied to test dataset.
+
+```{r cleanup for delay in handover to carrier feature analysis, include=FALSE}
+rm(delay_in_handover_to_carrier_analysis_dataset,analysis_joined_data)
+```
+
+#### Delay in payment approval feature
+In addition to above, as part of the dataset, there were two other important attributes i.e. order_purchase_timestamp and payment_approved_at. Here, payment_approved_at is the actual timestamp when payment is approved for a given order. While, order_purchase_timestamp is the timestamp at which product was ordered.
+
+Together these fields were considered useful as they could be used to understand if there was a delay or not in approving the payment. Also, this delay or early handover, could influence delivery timeline even if everything else was to take the same time.
+
+We decided to look more into this intuition. For this, the feature i.e mean_delay_in_payment_approval was computed for each customer_zip_code_prefix. The computed data was then joined with training_dataset and the below graph was used to visualize the relation between delay in payment approval and number of hours taken for delivery. In order to see the trend in this over-plotted graph, gam method based smoothing curve was also plotted on the graph.
+
+```{r Explore delay_in_payment_approval relation with number_of_hours, echo=FALSE, message=FALSE}
+delay_in_payment_approval_analysis_dataset <- training_dataset %>%
+  get_delay_in_payment_approval_per_customer_zip_code()
+
+analysis_joined_data <- training_dataset %>%
+  left_join(delay_in_payment_approval_analysis_dataset,by='customer_zip_code_prefix')
+
+analysis_joined_data %>% ggplot(aes(mean_delay_in_payment_approval,log10(number_of_hours))) + geom_point() + geom_smooth() + xlab('Delay in payment approval') + ylab('Number of hours taken for delivery [log10(n) scale]')
+```
+In above plot, we noted that number of hours taken for delivery follow a non linear pattern.
+
+```{r correlation analysis for mean_delay_in_payment_approval with number of hours, echo=FALSE}
+# correlation analysis for mean_delay_in_payment_approval with number of hours
+analysis_output_rows <- sapply(seq(0,125,25), function(offset) {  
+  list(delay_in_approval=str_c('>=',offset,' & <',offset+25),
+       correlation=cor(analysis_joined_data %>% 
+                         filter(mean_delay_in_payment_approval>=offset & mean_delay_in_payment_approval< offset+25) %>% 
+                         pull(mean_delay_in_payment_approval), 
+                       analysis_joined_data %>% 
+                         filter(mean_delay_in_payment_approval>=offset & mean_delay_in_payment_approval< offset+25) %>% 
+                         pull(number_of_hours))) 
+  },simplify=TRUE)
+
+analysis_output_rows %>% t() %>% rbind( c(str_c('>=',150),
+                          round(cor(analysis_joined_data %>% 
+                                      filter(mean_delay_in_payment_approval>=150) %>%
+                                      pull(mean_delay_in_payment_approval), 
+                                    analysis_joined_data %>% 
+                                      filter(mean_delay_in_payment_approval>=150) %>%
+                                      pull(number_of_hours)),7))
+                        ) %>% as.data.frame() %>% knitr::kable(caption='Correlation analysis between delay in payment approval and number of hours taken for delivery')
+
+rm(analysis_output_rows)
+```
+This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model. However, as for new orders this information would not be available at time of placing the order, we were required to compute this feature using training data and apply the captured learnings later on test data. 
+
+To be able to do this, as shared earlier, the feature i.e. mean_delay_in_payment_approval was computed for each customer_zip_code_prefix based on training dataset and then applied to test dataset.
+
+
+```{r cleanup for delay in payment approval feature analysis, include=FALSE}
+rm(delay_in_payment_approval_analysis_dataset,analysis_joined_data)
+```
+
+#### Volume feature
+As part of the dataset, there were three attributes about product dimensions i.e. product_length_cm, product_height_cm and product_width_cm. Together these fields were considered useful as they could be used to derive volume of the product.
+
+We looked into the intuition that product volume could influence the delivery timelines as larger products need special delivery mechanism and even dedicated trucks at times for shipment, which may not be readily available.
+
+To understand its influence on the delivery timelines, we plotted numbers of hours taken for delivery against the volume of the product ordered in cubic centimeter($cm^3$). In order to see the trend in this over-plotted graph, gam method based smoothing curve was also plotted on the graph.
+
+```{r Explore volume relation with number_of_hours, echo=FALSE, message=FALSE}
+training_dataset  %>% ggplot(aes(volume,log10(number_of_hours))) + geom_point() + geom_smooth() + xlab('Volume of ordered product') + ylab('Number of hours taken for delivery [log10(n) scale]')
+```
+In above plot, we noted that number of hours taken for delivery vary as the product volume changes. There appeared to be stronger influence on delivery timelines for bulkier products beyond a limit. 
+
+```{r correlation analysis for volume with number of hours, echo=FALSE}
+# correlation analysis for volume with number of hours
+
+analysis_output_rows <- sapply(seq(0,210000,70000), function(offset) {  
+  list(delay_limit=str_c('>=',offset,' & <',offset+70000),
+       correlation=cor(training_dataset %>% 
+                         filter(volume>=offset & volume< offset+70000) %>% 
+                         pull(volume), 
+                       training_dataset %>% 
+                         filter(volume>=offset & volume< offset+70000) %>% 
+                         pull(number_of_hours))) 
+  },simplify=TRUE)
+
+analysis_output_rows %>% t() %>% rbind( c(str_c('>=',280000),
+                          round(cor(training_dataset %>% 
+                                      filter(volume>=280000) %>%
+                                      pull(volume), 
+                                    training_dataset %>% 
+                                      filter(volume>=280000) %>%
+                                      pull(number_of_hours)),7))
+                        ) %>% as.data.frame() %>% knitr::kable(caption='Correlation analysis between volume and number of hours taken for delivery')
+
+rm(analysis_output_rows)
+```
+
+This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model.
+
+### Categorical features
+
+#### Product category effects
+We decided to look into our intuition that different product categories may have different delivery timelines and explore its influence on the prediction results.
+
+Below errorbar plot depicts how average number of hours taken for delivery vary across product categories while at the same time capturing the confidence interval of number of hours taken for delivery for each product category.
+
+```{r Explore product_category_name relation with number_of_hours, echo=FALSE}
+training_dataset %>% group_by(product_category_name) %>%
+  summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% 
+  mutate(product_category_name=reorder(product_category_name,mean)) %>% 
+  ggplot(aes(x=product_category_name,y=mean,ymax=mean+2*se,ymin=mean-2*se)) +
+  geom_point()+ geom_errorbar() + theme(axis.text.x = element_text(angle=90,size=8)) + xlab('Product Categories') + ylab('Avg number of hours')
+```
+
+In above plot, we noted that average number of hours taken for delivery vary considerably from one product category to another. So our intuition that product categories influence delivery time was confirmed. 
+
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, product categories are categorical in nature and they are quite a few categories, incorporating them directly would not have worked for many machine learning models which require numerical values. Additionally in some cases, each category could end up being treated as a predictor which is also the case with one-hot encoding. 
+
+However, to convert categorical variables to numeric values and still be able to limit features and make model training and evaluation less expensive, we applied **target encoding** on the product categories attribute. 
+
+But to do that, first, we checked number of observations per product category and noticed that the distribution could require **regularization** to prevent overfitting. Secondly, target encoding could be erroneous if done against the random dataset.
+
+To solve these, we identified the regularization weight to use by carrying out target encoding for different datasets set of weights, selecting single weight per dataset based on performance metric i.e. RMSE and then we took a mean of weights identified across the datasets.
+
+Once weight was identified, to avoid any randomness due to choice of the dataset, we computed target encoding for product category attribute across 10 datasets and then took a mean for them to settle at the final target encoded values to use for the concerned feature.
+
+For the above analysis, knn model was used, given that it does not make assumptions about the dataset, which was useful in the early phase of analysis. However, to use knn model, we **scaled and normalized** the features as knn model uses Euclidean distance. Scaling and normalization was carried our using training data and then used for test data.
 
 ```{r Apply Target encoding for product_category_name, include = FALSE, eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1081,8 +1238,8 @@ Below histogram depicts how mean rating of movie across movies is distributed.
       
       # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
-      tuningControl=trainControl(method = "cv", number = 3, p = .8)
-      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(34,41,48)),trControl=tuningControl)
+      tuningControl=trainControl(method = "cv", number = 3)
+      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(41,47,53)),trControl=tuningControl)
       
       knn_fit_for_weight
       print(knn_fit_for_weight)
@@ -1103,10 +1260,28 @@ Below histogram depicts how mean rating of movie across movies is distributed.
 weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition)  
-# 20/3
+# 5
 
 target_encoding_weights <- target_encoding_weights %>% add_row(effect='product_category',weight=weight_to_use)
 ```
+
+#### Seller id effects
+Next we looked into the intuition that orders for products from different sellers based on what they sell, how they operate could influence delivery timelines.
+
+Below errorbar plot depicts how average number of hours taken for delivery vary across sellers while at the same time capturing the confidence interval of number of hours taken for delivery for each seller. Since there were **`r training_dataset %>% dplyr::distinct(seller_id) %>% nrow()`** sellers, we sampled **300** of them to represent their influence effectively in the graph. 
+
+```{r Explore seller_id relation with number_of_hours, echo=FALSE, warning = FALSE}
+set.seed(1, sample.kind = 'Rounding')
+training_dataset %>% group_by(seller_id) %>%
+  summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>%
+  mutate(seller_id=reorder(seller_id,mean)) %>% 
+  filter(seller_id %in% sample(seller_id,300,replace=FALSE)) %>%
+  ggplot(aes(x=seller_id,y=mean,ymax=mean+2*se,ymin=mean-2*se)) +
+  geom_point()+ geom_errorbar() + theme(axis.text.x = element_blank()) + xlab('Seller Ids') + ylab('Avg number of hours')
+```
+In above plot, we noted that average number of hours taken for delivery vary considerably from one seller to another. So our intuition that sellers influence delivery time was confirmed. 
+
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, seller ids similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(seller_id) %>% nrow()`** sellers, which are a lot. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for seller ids we applied target encoding and followed strategy used for product categories.
 
 ```{r Apply Target encoding for seller_id, include = FALSE, eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1117,7 +1292,7 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='product_c
   set.seed(1,sample.kind='Rounding')
   test_weight_indices <- createDataPartition(train_subset_for_encoding$number_of_hours,p=0.2,times=3,list=FALSE)
   
-  weights <- seq(0,6,3)
+  weights <- seq(0,9,3)
   
   weight_to_use_per_partition <- sapply(1:3, function(index) {
   #lambda_data_set <- prepare_lambda_data_set(index)
@@ -1170,8 +1345,8 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='product_c
       
       # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
-      tuningControl=trainControl(method = "cv", number = 3, p = .8)
-      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(34,41,48)),trControl=tuningControl)
+      tuningControl=trainControl(method = "cv", number = 3)
+      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(41,47,53)),trControl=tuningControl)
       
       knn_fit_for_weight
       
@@ -1193,10 +1368,27 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='product_c
 weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition)  
-# 5
+# 8
 
 target_encoding_weights <- target_encoding_weights %>% add_row(effect='seller_id',weight=weight_to_use)
 ```
+
+#### Customer state effects
+Next we looked into the intuition that customer states can have different regulations, paper work, approvals which could influence delivery timelines.
+
+Below errorbar plot depicts how average number of hours taken for delivery vary across customer state while at the same time capturing the confidence interval of number of hours taken for delivery for each customer state. 
+
+```{r Explore customer_state relation with number_of_hours, echo=FALSE, warning = FALSE}
+set.seed(1, sample.kind = 'Rounding')
+training_dataset %>% group_by(customer_state) %>%
+  summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>%
+  mutate(customer_state=reorder(customer_state,mean)) %>% 
+  ggplot(aes(x=customer_state,y=mean,ymax=mean+2*se,ymin=mean-2*se)) +
+  geom_point()+ geom_errorbar() + theme(axis.text.x = element_text(angle=90,size=8)) + xlab('Customer States') + ylab('Avg number of hours')
+```
+In above plot, we noted that average number of hours taken for delivery vary considerably from one customer state to another. So our intuition that customer state influences delivery time was confirmed. 
+
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, customer states similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(customer_state) %>% nrow()`** customer states. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for customer states we applied target encoding and followed strategy used for product categories.
 
 ```{r Apply Target encoding for customer_state, include = FALSE,eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1270,7 +1462,7 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='seller_id
       
       # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
-      tuningControl=trainControl(method = "cv", number = 3, p = .8)
+      tuningControl=trainControl(method = "cv", number = 3)
       knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(34,41,48)),trControl=tuningControl)
       
       knn_fit_for_weight
@@ -1293,11 +1485,29 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='seller_id
 weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition) 
-# 10
+# 5
 
 target_encoding_weights <- target_encoding_weights %>%
   add_row(effect='customer_state',weight=weight_to_use)
 ```
+
+#### Customer location(loc) effects
+Next we looked into the intuition that rough information about customer location i.e. combination of co-located zip codes can influence the delivery timelines as customer location can be remote or require different means of transport, among others.
+
+Below errorbar plot depicts how average number of hours taken for delivery vary across customer locations while at the same time capturing the confidence interval of number of hours taken for delivery for each customer location. 
+
+```{r Explore customer_loc relation with number_of_hours, echo=FALSE, warning = FALSE}
+set.seed(1, sample.kind = 'Rounding')
+training_dataset %>% group_by(customer_loc) %>%
+  summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>%
+  mutate(customer_loc=reorder(customer_loc,mean)) %>% 
+  ggplot(aes(x=customer_loc,y=mean,ymax=mean+2*se,ymin=mean-2*se)) +
+  geom_point()+ geom_errorbar() + theme(axis.text.x = element_blank()) + xlab('Customer Locations') + ylab('Avg number of hours')
+```
+In above plot, we noted that average number of hours taken for delivery vary considerably from one customer location to another. So our intuition that customer location influences delivery time was confirmed. 
+
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, customer locations similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(customer_loc) %>% nrow()`** customer locations. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for customer states we applied target encoding and followed strategy used for product categories.
+
 
 ```{r Apply Target encoding for customer_loc, include = FALSE,eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1378,8 +1588,8 @@ target_encoding_weights <- target_encoding_weights %>%
       
       # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
-      tuningControl=trainControl(method = "cv", number = 3, p = .8)
-      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(34,41,48)),trControl=tuningControl)
+      tuningControl=trainControl(method = "cv", number = 3)
+      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(35,43,49)),trControl=tuningControl)
       
       knn_fit_for_weight
       
@@ -1401,7 +1611,7 @@ target_encoding_weights <- target_encoding_weights %>%
 weight_to_use_per_partition
 
 weight_to_use <- mean(weight_to_use_per_partition) 
-# 5
+# 20/3
 
 target_encoding_weights <- target_encoding_weights %>% add_row(effect='customer_loc',weight=weight_to_use)
 ```
@@ -1415,8 +1625,41 @@ save(target_encoding_weights,file='rda/target_encoding_weights.rda')
 load('rda/target_encoding_weights.rda')
 ```
 
-penalty_data is computed on train_subset and is used with test_subset as historical learning of efficiency of each seller in delivering to carrier
-Similarly delay in payment approval is used to incorporate role of customer zip code in delaying this processing, which maybe due to fraud analysis etc.
+### Other features
+
+#### Price feature
+We looked into the intuition that order item's price could influence the delivery timelines as expensive items ordered may have priority shipping or be delivered with caution. 
+
+To understand its influence on the delivery timelines, we plotted numbers of hours taken for delivery against the price of the ordered item. In order to see the trend, gam method based smoothing curve was plotted on the graph.
+
+```{r Explore price relation with number_of_hours, echo=FALSE, message=FALSE}
+training_dataset  %>% ggplot(aes(price,number_of_hours)) + geom_smooth() + xlab('Price of ordered item') + ylab('Number of hours taken for delivery')
+```
+In above plot, we noted that number of hours taken for delivery vary as the price of the ordered item changes. It appeared to increase significantly as the price of ordered item increased and decreased when the price reached towards higher limits. Though confidence interval indicated higher variability in delivery timelines at higher prices.
+
+This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model.
+
+#### Product weight feature
+Next we looked into the intuition that product weight can influence the delivery timelines as heavier items like furniture, bed may be transported slowly compared to lighter items.
+
+For this we plotted numbers of hours taken for delivery against the weight of the product ordered in grams. In order to see the trend in this over-plotted graph, gam method based smoothing curve was also plotted on the graph.
+
+```{r Explore product weight relation with number_of_hours, echo=FALSE, message=FALSE}
+training_dataset  %>% ggplot(aes(product_weight_g,log10(number_of_hours))) + geom_point() + geom_smooth() + xlab('Weight of ordered product in grams') + ylab('Number of hours taken for delivery [log10(n) scale]')
+```
+In above plot, we noted that number of hours taken for delivery vary as the product weight changes. This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model.  
+
+#### Freight value feature
+Next we looked into the intuition that freight value can help determine the delivery timelines as higher freight value could indicate complexity in shipment, extra processing which would need time, among others.
+
+For this we plotted numbers of hours taken for delivery against the freight value of the product ordered. In order to see the trend in this over-plotted graph, gam method based smoothing curve was also plotted on the graph.
+
+```{r Explore freight value relation with number_of_hours, echo=FALSE, message=FALSE}
+training_dataset  %>% ggplot(aes(freight_value,log10(number_of_hours))) + geom_point() + geom_smooth() + xlab('Freight value of ordered product') + ylab('Number of hours taken for delivery [log10(n) scale]')
+```
+In above plot, we noted that number of hours taken for delivery vary as the freight value of product changes. It appeared to increase as freight value increased for smaller freight values, then plateaued and decreased as freight value reached higher limits The decrease could be due to priority shipping coming at a cost. This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model.  
+
+## Model Selection
 ```{r Prepare training and test data for model tuning and development,include=FALSE}
 dataset_list <- prepare_data_for_training_testing(train_subset,test_subset,FALSE)
 train_subset <- dataset_list[[1]]
@@ -1429,10 +1672,27 @@ test_subset <- test_subset %>%
   select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix,-order_purchase_timestamp,-payment_approved_at)
 ```
 
+Post evaluation with multiple features, the final set of features identified for model selection were as below:: 
 
-5 fold cross validation
+```{r Final set of features identified, echo=FALSE}
+train_subset %>% colnames() %>% knitr::kable(col.names=c('Feature'),caption='Features List')
+```
+
+To start building our model, training and test subset were prepared. For this, we further partitioned our training data set i.e. training_dataset into a split of 80/20 between train_subset and test_subset to ensure we use only the train_subset for training and tuning the model and test_subset to evaluate the model and measure RMSE. This would ensure there is no data leak. The split like earlier was done such that distribution of outcome i.e. number_of_hours was similar in both training and test data.
+
+The derived features selected earlier were prepared based on train_subset and applied over test_subset, to ensure we maintain the environmental condition where test data is not known to us.
+
+In addition, as earlier shared, categorical features were converted to numeric form with the help of target encoding with a weight term computed earlier for purpose of regularization and to avoid overfitting. Also, any undesired features were removed, reducing train_subset and test_subset to only the desired features.
+
+### k-nearest neighbors(knn) model
+k-nearest neighbors(knn) being based on data points of nearest neighbours was a good starting point. And the fact that knn model does not make assumptions about the dataset, made it a good candidate for initial performance evaluation. 
+
+To use knn model, features were scaled and normalized to prevent overfitting as knn internally calculates Euclidean distance for finding the nearest data-points. 
+
+In addition, for knn model training and tuning, we carried our 5-fold cross validation, which helped to remove any randomness from our tuning parameters. This helped reduced the probability of overfitting.
+ 
+5-fold cross validation was carried out.
 80/20 split
-TODO remove p=0.8 from knn trainControl as it is not used.
 
 ```{r knn model data scaled under test, include=FALSE, eval=FALSE}
 ## TODO make echo=FALSE 
@@ -1460,7 +1720,7 @@ performance_metric <- performance_metric %>%
           value=RMSE((scaled_test_subset %>% pull(number_of_hours)),predictions))
 
 performance_metric
-#183.7767 for k=63
+#183.0028 for k=77
 
 save(knn_fit,file='rda/knn_model.rda')
 ```
@@ -1473,7 +1733,7 @@ Algorithms considered
 - gam
 
 
-Random forest
+### Random forest model
 However, it is important to know your data and keep in mind that a Random Forest can’t extrapolate. It can only make a prediction that is an average of previously observed labels. In this sense it is very similar to KNN.
 In other words, in a regression problem, the range of predictions a Random Forest can make is bound by the highest and lowest labels in the training data. This behavior becomes problematic in situations where the training and prediction inputs differ in their range and/or distributions. This is called covariate shift and it is difficult for most models to handle but especially for Random Forest, because it can’t extrapolate.
 From : https://towardsdatascience.com/a-limitation-of-random-forest-regression-db8ed7419e9f
@@ -1494,9 +1754,38 @@ performance_metric <- performance_metric %>%
           value=RMSE((test_subset %>% pull(number_of_hours)),predictions))
 
 performance_metric
-# 174.2496 for mtry 2. Technically there are total of 11 predictors. The seller_state was not of much help. it was actually increasing RMSE. So have ignored it.
+# 173.3481 for mtry 2. Technically there are total of 11 predictors. The seller_state was not of much help. it was actually increasing RMSE. So have ignored it.
 
 save(rf_fit,file='rda/rf_model.rda')
+```
+
+==TODO include gam model if required.
+
+### Ensemble model 
+```{r Ensemble, include=FALSE, eval= FALSE}
+load('rda/knn_model.rda')
+load('rda/rf_model.rda')
+set.seed(1, sample.kind = 'Rounding')
+
+predictions_knn <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
+predictions_rf <- predict(rf_fit,test_subset %>% select(-number_of_hours))
+
+predictions_df <- data.frame(predictions_knn,predictions_rf)
+
+# mean approach
+
+performance_metric <- performance_metric %>% 
+  add_row(type='Ensemble model(partial dataset)',
+          value=RMSE(rowMeans(predictions_df),(test_subset %>% pull(number_of_hours) )))
+#175.7183
+
+# max approach
+RMSE(predictions_df %>% mutate(max=pmax(predictions_knn,predictions_rf)) %>% pull(max),(test_subset %>% pull(number_of_hours)))
+#177.7854
+
+# min approach
+RMSE(predictions_df %>% mutate(min=pmin(predictions_knn,predictions_rf)) %>% pull(min),(test_subset %>% pull(number_of_hours)))
+#178.7218
 ```
 
 ```{r Save performance metric, include=FALSE, eval=FALSE}
@@ -1508,21 +1797,18 @@ save(performance_metric,file='rda/performance_metric.rda')
 load('rda/performance_metric.rda')
 ```
 
+# Results
+Post model tuning and evaluation, random forest algorithm emerged as the right fit for our data. The tuning parameters identified for the final random forest algorithm are shared below:
 
-```{r ensemble, include=FALSE, eval= FALSE}
-load('rda/knn_model.rda')
+```{r Tuning parameters to use for final random forest, echo=FALSE}
 load('rda/rf_model.rda')
 
-predictions_knn <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
-predictions_rf <- predict(rf_fit,test_subset %>% select(-number_of_hours))
-
-predictions_df <- data.frame(predictions_knn,predictions_rf)
-
-RMSE(rowMeans(predictions_df),(test_subset %>% pull(number_of_hours) ))
-176.5041
+data.frame(tuning_parameter='mtry', value=rf_fit$finalModel$mtry) %>% add_row(tuning_parameter='number_of_trees', value=500) %>% knitr::kable(caption='Random forest tuning parameters')
 ```
 
+Till this point, we had used only training data set i.e. training_dataset to identify the features, evaluate various models and tune them. Having selected the final model, we prepared first the derived features, which as shared earlier were prepared on training_dataset. The features were then applied over validation_dataset, which was the dataset kept aside till now.
 
+In addition, categorical features were converted to numeric form with the help of target encoding with a weight term computed earlier for purpose of regularization and to avoid overfitting. Also, any undesired features were removed, reducing training_dataset and validation_dataset to only the desired features.
 
 ```{r Prepare dataset for final model training, include = FALSE}
 set.seed(seed=1,sample.kind = 'Rounding')
@@ -1566,20 +1852,61 @@ predictions <- predict(final_model,validation_dataset %>% select(-number_of_hour
 performance_metric <- performance_metric %>% 
   add_row(type='Final model',
           value=RMSE((validation_dataset %>% pull(number_of_hours) ),predictions))
-# 189.2705 for mtry=2, ntree=500
+# 188.5793 for mtry=2, ntree=500
 
 performance_metric
 ```
 
+Below is the summary of model against the performance metric i.e. RMSE
+```{r Performance metric post final model validation, echo=FALSE}
+performance_metric %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
+```
+```
+
+```{r Final knn model traing with data scaled, include=FALSE, eval= FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+preProcessScalingValues <- preProcess(training_dataset %>% select(-number_of_hours), method = c("center", "scale"))
+
+scaled_train_subset <- predict(preProcessScalingValues, training_dataset) 
+scaled_test_subset <- predict(preProcessScalingValues, validation_dataset) 
+
+final_knn_fit <- knnreg(number_of_hours~., scaled_train_subset,k = knn_fit$finalModel$k)
+
+final_knn_fit
+
+predictions <- predict(final_knn_fit,scaled_test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
+# 202.8552
+
+save(final_knn_fit,file='rda/final_knn_fit.rda')
+```
 
 
-five sets each having a training set and testing set. This ensured that we used only edx dataset while we developed our model. In addition, the multiple partitions helped to remove any randomness from our tuning parameters and to get an appopriate estimate of performance for our incremental model. This helped reduced the probability of overfitting.
+```{r Final ensemble model, include=FALSE, eval= FALSE}
+load('rda/final_knn_fit.rda')
+load('rda/final_model.rda')
 
+set.seed(seed=1,sample.kind = 'Rounding')
 
+predictions_knn <- predict(final_knn_fit,scaled_test_subset %>% select(-number_of_hours))
+predictions_rf <- predict(final_model,validation_dataset %>% select(-number_of_hours))
 
+predictions_df <- data.frame(predictions_knn,predictions_rf)
 
+RMSE(rowMeans(predictions_df),(validation_dataset %>% pull(number_of_hours) ))
+# 193.3459
+```
 
-we should consider if we need time stamp or we can take purchase time as 0 and calculated approved at from it. though we may lose granularity in terms of time as truck may come everyday at 4. so after 4 you can ship , before 4 you cant
-We can be agnostic to purchase time and just predict number of hours for delivery for given purchase.
- 
-TODO -> if there is delayed to carrier precendence, we could use that probability and average delay to carrier to fine tune our results. Similarly we could use other metrics like payment approval time etc.
+For the **final model**, the performance metric i.e. RMSE = **`r performance_metric %>% filter(type=='Final model') %>% pull(value)`** captured against **validation_dataset** was much better than what Olist store had as identified from the dataset. The newly built model can be used for predicting number of hours required for delivery of a given ordered item.
+
+# Conclusion
+As part of this project, the goal was to build a delivert prediction system which could predict the number of hours required to delivered the ordered item rating with minimal RMSE. 
+
+During the course of project, we carried out data cleaning, identified features and derived features from existing information available. In addition, converted categorical features to numeric form and applied various techniques like target encoding, scaling and normalization as required and regularized the required features. 
+
+Once the feature analysis and selection was completed, we used the features to tune models like k-nearest neighbours, random forest. We carried out k-fold cross validation to remove any randomness from the model training and tuning process. Finally we reached to a model which performs within desired range of RMSE and can be useful for predicting number of hours required for delivery of a given ordered item. Due care was taken to prevent overfitting from influencing our model.
+
+While the model is a significant improvement over what Olist store had, there is lot of room to improve it. It can be improved for incremental learning so that it can learn from new orders and their delivery details once they become available. In addition, it could be improved to handle new sellers or product categories.
+
+Having said that the delivery prediction system built as part of the project is performant and can be leveraged to develop further.
