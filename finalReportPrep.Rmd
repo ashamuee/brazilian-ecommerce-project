@@ -922,8 +922,6 @@ prepare_data_for_training_testing <- function(train_ds, test_ds, cleanup) {
 }
 ```
 
-== TODO additive smoothing/Bayes estimator with target encoding
-
 ## Feature Analysis and Selection
 Since we needed to build delivery prediction system which could estimate number of hours required for delivery for new orders, while maintaining minimum RMSE, we used our intuition and understanding of the domain to guide us in deriving insights from available predictors. The same are shared below:
 
@@ -1133,13 +1131,17 @@ In above plot, we noted that average number of hours taken for delivery vary con
 
 Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, product categories are categorical in nature and they are quite a few categories, incorporating them directly would not have worked for many machine learning models which require numerical values. Additionally in some cases, each category could end up being treated as a predictor which is also the case with one-hot encoding. 
 
-However, to convert categorical variables to numeric values and still be able to limit features and make model training and evaluation less expensive, we applied **target encoding** on the product categories attribute. 
+However, to convert categorical variables to numeric values and still be able to limit features and make model training and evaluation less expensive, we applied additive smoothing based **target encoding** on the product categories attribute. 
 
-But to do that, first, we checked number of observations per product category and noticed that the distribution could require **regularization** to prevent overfitting. Secondly, target encoding could be erroneous if done against the random dataset.
+Additive smoothing based target encoding for a categorical variable = $(global\_mean * weight + N * u_t,c)/(weight+N)$
 
-To solve these, we identified the regularization weight to use by carrying out target encoding for different datasets set of weights, selecting single weight per dataset based on performance metric i.e. RMSE and then we took a mean of weights identified across the datasets.
+where $u_{t,c}$ is mean of target/outcome for a given category and weight is the smoothing factor or amount of regularization
 
-Once weight was identified, to avoid any randomness due to choice of the dataset, we computed target encoding for product category attribute across 10 datasets and then took a mean for them to settle at the final target encoded values to use for the concerned feature.
+But to do that, first we checked number of observations per product category, to understand the range of weights to consider. The target encoding could be erroneous if done with larger weight or against the random dataset.
+
+To solve these, we identified the smoothing factor(or weight) to use by carrying out target encoding for different datasets for a set of weights, selecting single weight per dataset based on performance metric i.e. RMSE and then we took a mean of weights identified across the datasets.
+
+Once weight was identified, to avoid any randomness due to choice of the dataset, we computed additive smoothing based target encoding for product category attribute across 10 datasets and then took a mean for them to settle at the final target encoded values to use for the concerned feature.
 
 For the above analysis, knn model was used, given that it does not make assumptions about the dataset, which was useful in the early phase of analysis. However, to use knn model, we **scaled and normalized** the features as knn model uses Euclidean distance. Scaling and normalization was carried our using training data and then used for test data.
 
@@ -1228,7 +1230,7 @@ training_dataset %>% group_by(seller_id) %>%
 ```
 In above plot, we noted that average number of hours taken for delivery vary considerably from one seller to another. So our intuition that sellers influence delivery time was confirmed. 
 
-Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, seller ids similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(seller_id) %>% nrow()`** sellers, which are a lot. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for seller ids we applied target encoding and followed strategy used for product categories.
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, seller ids similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(seller_id) %>% nrow()`** sellers, which are a lot. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for seller ids we applied additive smoothing based target encoding and followed strategy used for product categories.
 
 ```{r Apply Target encoding for seller_id, include = FALSE, eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1326,7 +1328,7 @@ training_dataset %>% group_by(customer_state) %>%
 ```
 In above plot, we noted that average number of hours taken for delivery vary considerably from one customer state to another. So our intuition that customer state influences delivery time was confirmed. 
 
-Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, customer states similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(customer_state) %>% nrow()`** customer states. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for customer states we applied target encoding and followed strategy used for product categories.
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, customer states similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(customer_state) %>% nrow()`** customer states. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for customer states we applied additive smoothing based target encoding and followed strategy used for product categories.
 
 ```{r Apply Target encoding for customer_state, include = FALSE,eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1435,7 +1437,7 @@ training_dataset %>% group_by(customer_loc) %>%
 ```
 In above plot, we noted that average number of hours taken for delivery vary considerably from one customer location to another. So our intuition that customer location influences delivery time was confirmed. 
 
-Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, customer locations similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(customer_loc) %>% nrow()`** customer locations. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for customer states we applied target encoding and followed strategy used for product categories.
+Given the influence, we decided to consider this as a feature for further analysis for inclusion in the model. However, customer locations similar to product categories are categorical in nature and there are **`r training_dataset %>% dplyr::distinct(customer_loc) %>% nrow()`** customer locations. Incorporating them as it is would not have worked for many machine learning models which require numerical values. As a result, for customer states we applied additive smoothing based target encoding and followed strategy used for product categories.
 
 
 ```{r Apply Target encoding for customer_loc, include = FALSE,eval=FALSE}
@@ -1602,7 +1604,7 @@ To start building our model, training and test subset were prepared. For this, w
 
 The derived features selected earlier were prepared based on train_subset and applied over test_subset, to ensure we maintain the environmental condition where test data is not known to us.
 
-In addition, as earlier shared, categorical features were converted to numeric form with the help of target encoding with a weight term computed earlier for purpose of regularization and to avoid overfitting. Also, any undesired features were removed, reducing train_subset and test_subset to only the desired features.
+In addition, as earlier shared, categorical features were converted to numeric form with the help of additive smoothing based target encoding with a smoothing factor/weight term computed earlier to avoid overfitting. Also, any undesired features were removed, reducing train_subset and test_subset to only the desired features.
 
 ### k-nearest neighbors(knn) model
 k-nearest neighbors(knn) relies on finding nearest neighbors and uses average of the nearest neigbbors for prediction. In addition, it does not make assumptions about the dataset. In our case limited dataset and that the alogrithm does not make any assumptions, made it a good candidate for model development and performance evaluation. 
@@ -1784,7 +1786,7 @@ data.frame(tuning_parameter='mtry', value=rf_fit$finalModel$mtry) %>% add_row(tu
 
 Till this point, we had used only training data set i.e. training_dataset to identify the features, evaluate various models and tune them. Having selected the final model, we prepared first the derived features, which as shared earlier were prepared on training_dataset. The features were then applied over validation_dataset, which was the dataset kept aside till now.
 
-In addition, categorical features were converted to numeric form with the help of target encoding with a weight term computed earlier for purpose of regularization and to avoid overfitting. Also, any undesired features were removed, reducing training_dataset and validation_dataset to only the desired features.
+In addition, categorical features were converted to numeric form with the help of additive smoothing based target encoding with a weight term computed earlier for purpose of smoothing and to avoid overfitting. Also, any undesired features were removed, reducing training_dataset and validation_dataset to only the desired features.
 
 ```{r Prepare dataset for final model training, include = FALSE}
 set.seed(seed=1,sample.kind = 'Rounding')
@@ -1883,7 +1885,7 @@ For the **final model**, the performance metric i.e. RMSE = **`r performance_met
 # Conclusion
 As part of this project, the goal was to build a delivery prediction system which could predict the number of hours required to delivered the ordered item rating with minimal RMSE. 
 
-During the course of project, we carried out data cleaning, identified features and derived features from existing information available. In addition, converted categorical features to numeric form and applied various techniques like target encoding, scaling and normalization as required and regularized the required features. 
+During the course of project, we carried out data cleaning, identified features and derived features from existing information available. In addition, converted categorical features to numeric form and applied various techniques like additive smoothing based target encoding, scaling and normalization as required. 
 
 Once the feature analysis and selection was completed, we used the features to tune models like k-nearest neighbors, random forest. We carried out k-fold cross validation to remove any randomness from the model training and tuning process. This additionally helped to reduce probability of overfitting. Post this, we explored multiple ensemble models using techniques like averaging, weighted average, stacking, among others. Finally we selected random forest based model and the model so trained performs within desired range of RMSE and can be useful for predicting number of hours required for delivery of a given ordered item. Due care was taken to prevent overfitting from influencing our model.
 
