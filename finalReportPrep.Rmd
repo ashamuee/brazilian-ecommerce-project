@@ -250,21 +250,13 @@ sellers_dataset %>% str()
 # we noticed some seller_zip_code_prefix are not present in geolocation dataset. So we will ignore them
 sellers_to_ignore <- sellers_dataset %>% anti_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) 
 
+# while there are small number of order items for the concerned sellers, we will ignore them as we will still have sufficient data for analysis.
 order_items_dataset %>% inner_join(sellers_to_ignore,by='seller_id') %>% nrow()
-# while there are decent number of order items for the concerned sellers, we will ignore them as we will still have sufficient data for analysis.
-
 
 # let's use the one of interest
-sellers_dataset <- sellers_dataset %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_seller=geolocation_lat,geolocation_lng_seller=geolocation_lng)
-
-# TODO there seems to be an issue (Should be resolved now)
-# geolocation_dataset seems to have 4 entries for same zip code . example 13454
-# sellers_dataset %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% dplyr::count(seller_id) %>% slice_max(order_by=n,n=5)
-
-# we tried another approach by joining over all zip codee, city and state but it led to no match
-# sellers_dataset %>% mutate(seller_city=stri_trans_general(seller_city,"Any-ASCII")) %>% inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix','seller_city'='geolocation_city','seller_state'='geolocation_state')) %>% str()
-# TODO -- if we analyse we can see city and state for seller data differ in both datasets. so best to stick to zip code. city and state are prone to errors.
-# we decided against using city and state.
+sellers_dataset <- sellers_dataset %>% 
+  inner_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) %>% 
+  rename(geolocation_lat_seller=geolocation_lat,geolocation_lng_seller=geolocation_lng)
 ```
 
 The wrangled sellers dataset looks like below:
@@ -278,12 +270,13 @@ sellers_dataset %>% head(2) %>% as.matrix()  %>% t() %>%
 # similarly let see customers for whom we don't have data in geolocation_dataset
 customers_to_ignore <- customers_dataset %>% anti_join(geolocation_dataset,by=c('customer_zip_code_prefix'='geolocation_zip_code_prefix')) 
 
-
+# while there are small number of orders for these customers, we will ignore them as we will still have sufficient data for analysis.
 orders_dataset %>% inner_join(customers_to_ignore,by='customer_id') %>% nrow()
-# while there are decent number of orders for these customers, we will ignore them as we will still have sufficient data for analysis.
 
 # let's use customers of interest
-customers_dataset <- customers_dataset %>% inner_join(geolocation_dataset,by=c('customer_zip_code_prefix'='geolocation_zip_code_prefix')) %>% rename(geolocation_lat_customer=geolocation_lat,geolocation_lng_customer=geolocation_lng) 
+customers_dataset <- customers_dataset %>% 
+  inner_join(geolocation_dataset,by=c('customer_zip_code_prefix'='geolocation_zip_code_prefix')) %>% 
+  rename(geolocation_lat_customer=geolocation_lat,geolocation_lng_customer=geolocation_lng) 
 ```
 
 The wrangled customers dataset looks like below:
@@ -294,19 +287,8 @@ customers_dataset %>% head(2) %>% as.matrix()  %>% t() %>%
 
 
 ```{r Combine data sets, include=FALSE, echo=FALSE}
-# we can combine orders delivery information (orders_dataset) with orders items and seller related info (order_items_dataset)
-# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% head()
-
-# let's combine with seller details
-# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% head()
-
-# let's combine with unique customer and its location dataset
-# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% select(-customer_id) %>% head()
-
-# let's combine with products data as well
-# orders_dataset %>% inner_join(order_items_dataset,by='order_id') %>% inner_join(sellers_dataset,by='seller_id') %>% inner_join(customers_dataset,by='customer_id') %>% inner_join(products_dataset,by='product_id') %>% select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-customer_state) %>% head()
-
 # so raw data
+# in Brazil first digit of the five code zip code prefix can be 0. So we explicitly add 0 to it.
 raw_data <- orders_dataset %>% 
   inner_join(order_items_dataset,by='order_id') %>%
   inner_join(sellers_dataset,by='seller_id') %>% 
@@ -322,52 +304,11 @@ raw_data <- orders_dataset %>%
   select(-customer_id,-order_status,-seller_city,-seller_state,-customer_city,-order_id,-product_id,-seller_zip_code_prefix,-customer_unique_id)
 ```
 
-
-```{r RMSE, include=FALSE}
-# Performance metric
-RMSE <- function(true_outcomes, predicted_outcomes) {
-  sqrt(mean((true_outcomes - predicted_outcomes)^2))
-}
-```
-
-```{r Current RMSE, include=FALSE, echo = FALSE}
-# current RMSE can be calculated by finding number of hours for predicted delivery time given by order_estimated_delivery_date vs actual outcome/number of hours give by order_delivered_customer_date
-# However, note that order_estimated_delivery_date has no timestamp, so we will remove timestamp component, round date using floor_date, which means any delivery done during the day say at 2017-10-10 21:25:13 is treated to be done on 2017-10-10
-
-# first we convert it to desired date
-# then we covert date to numeric i.e. to convert it to seconds
-# then we calculate time_taken_from_order_to_delivery, estimated_time_from_order_to_delivery in seconds
-data_for_rmse <- raw_data %>%
-  select(order_purchase_timestamp,order_delivered_customer_date,order_estimated_delivery_date) %>%
-  mutate(order_delivered_customer_date_low=floor_date(order_delivered_customer_date,unit="day"),
-         order_delivered_customer_date_high=ceiling_date(order_delivered_customer_date,unit="day")) %>% 
-  mutate(order_delivered_customer_date_low=as.numeric(order_delivered_customer_date_low),
-         order_delivered_customer_date_high=as.numeric(order_delivered_customer_date_high),
-         order_estimated_delivery_date=as.numeric(order_estimated_delivery_date))  %>%
-  mutate(time_taken_from_order_to_delivery_rangemax=order_delivered_customer_date_high-order_purchase_timestamp,
-         time_taken_from_order_to_delivery_rangemin=order_delivered_customer_date_low-order_purchase_timestamp,
-         estimated_time_from_order_to_delivery=order_estimated_delivery_date-order_purchase_timestamp) %>% 
-  mutate(estimated_time_from_order_to_delivery=estimated_time_from_order_to_delivery/3600,
-         time_taken_from_order_to_delivery_rangemax = time_taken_from_order_to_delivery_rangemax/3600,
-         time_taken_from_order_to_delivery_rangemin = time_taken_from_order_to_delivery_rangemin/3600) %>%
-  select(estimated_time_from_order_to_delivery,time_taken_from_order_to_delivery_rangemax,time_taken_from_order_to_delivery_rangemin)
-
-
-RMSE_value_based_on_max <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemax,data_for_rmse$estimated_time_from_order_to_delivery)
-# 359.9466
-
-RMSE_value_based_on_min <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemin,data_for_rmse$estimated_time_from_order_to_delivery)
-# 377.9515
-
-# if we look at graph we can  see there is huge difference between estimated data and actual delivery date
-# it is possible some products are bulky or require differen mode of transport like ship 
-data_for_rmse %>% mutate(diff=estimated_time_from_order_to_delivery-1/2*(time_taken_from_order_to_delivery_rangemax+time_taken_from_order_to_delivery_rangemin)) %>% ggplot(aes(diff)) + geom_histogram(binwidth = 24*2) + xlab('Estimation error where each bar represents 2 days')
-
-rm(data_for_rmse)
-```
-
 ```{r Prepare final wrangled data set, include=FALSE}
-# we will predict number of hours to deliver based on various predictors. This seems more appropriate. Though as a result of this, we won't be able to use night, day time data of purchase which may influence delivery time (say to carrier it is informed only next day)
+# Prepare final wrangled data set we will predict number of hours to deliver based on 
+# various predictors. This seems more appropriate. Though as a result of this, we won't be able 
+# to use night, day time data of purchase which may influence delivery time (say to carrier it 
+# is informed only next day)
 wrangled_data <- raw_data %>%
   mutate(order_delivered_customer_date=as.numeric(order_delivered_customer_date)) %>%
   mutate(number_of_hours=(order_delivered_customer_date-order_purchase_timestamp)/3600) %>%
@@ -391,6 +332,13 @@ Before we dived into building our delivery prediction system, we identified our 
     + Here, $\hat{y}$ is the prediction. In context of this project, predicted number of hours for delivering the order item,
     + and y is the actual outcome. In context of this project, actual number of hours taken for delivering the order item.
 
+```{r RMSE, include=FALSE}
+# Performance metric
+RMSE <- function(true_outcomes, predicted_outcomes) {
+  sqrt(mean((true_outcomes - predicted_outcomes)^2))
+}
+```
+
 ### Current RMSE
 
 Before we dived into building our delivery prediction system, we looked into current RMSE. To calculate this, we leveraged order_estimated_delivery_date i.e. estimated delivery date and order_delivered_customer_date i.e. actual delivery timestamp, which was available in orders data set.
@@ -400,6 +348,45 @@ While order_estimated_delivery_date did not have time details, order_delivered_c
 This RMSE i.e. our performance metric was later used as benchmark for modelling. The delivery prediction system being built attempted to improve on this metric.
 
 Below were the current RMSE calculations based on how we interpret the actual delivery timestamp.
+
+```{r Current RMSE, include=FALSE, echo = FALSE}
+# current RMSE can be calculated by finding number of hours for predicted delivery time 
+# order_estimated_delivery_date vs actual outcome/number of hours give by order_delivered_customer_date
+# However, note that order_estimated_delivery_date has no timestamp, so we will calculate RMSE 
+# for both cases i.e. delivery date was taken as previous date or next date. 
+# For this, from order_delivered_customer_date we will remove timestamp component, round date 
+# using floor_date, which means any delivery done during the day say at 2017-10-10 21:25:13 is treated to be done on 2017-10-10
+# Similarly we will round upwards using ceiling_date.
+
+# For this, first we convert it to desired date
+# then we covert date to numeric i.e. to convert it to seconds
+# then we calculate time_taken_from_order_to_delivery (min and max as shared above), estimated_time_from_order_to_delivery in seconds
+data_for_rmse <- raw_data %>%
+  select(order_purchase_timestamp,order_delivered_customer_date,order_estimated_delivery_date) %>%
+  mutate(order_delivered_customer_date_low=floor_date(order_delivered_customer_date,unit="day"),
+         order_delivered_customer_date_high=ceiling_date(order_delivered_customer_date,unit="day")) %>% 
+  mutate(order_delivered_customer_date_low=as.numeric(order_delivered_customer_date_low),
+         order_delivered_customer_date_high=as.numeric(order_delivered_customer_date_high),
+         order_estimated_delivery_date=as.numeric(order_estimated_delivery_date))  %>%
+  mutate(time_taken_from_order_to_delivery_rangemax=order_delivered_customer_date_high-order_purchase_timestamp,
+         time_taken_from_order_to_delivery_rangemin=order_delivered_customer_date_low-order_purchase_timestamp,
+         estimated_time_from_order_to_delivery=order_estimated_delivery_date-order_purchase_timestamp) %>% 
+  mutate(estimated_time_from_order_to_delivery=estimated_time_from_order_to_delivery/3600,
+         time_taken_from_order_to_delivery_rangemax = time_taken_from_order_to_delivery_rangemax/3600,
+         time_taken_from_order_to_delivery_rangemin = time_taken_from_order_to_delivery_rangemin/3600) %>%
+  select(estimated_time_from_order_to_delivery,time_taken_from_order_to_delivery_rangemax,time_taken_from_order_to_delivery_rangemin)
+
+
+RMSE_value_based_on_max <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemax,data_for_rmse$estimated_time_from_order_to_delivery)
+# 359.9466
+
+RMSE_value_based_on_min <- RMSE(data_for_rmse$time_taken_from_order_to_delivery_rangemin,data_for_rmse$estimated_time_from_order_to_delivery)
+# 377.9515
+
+rm(data_for_rmse)
+```
+
+
 ```{r Range of current rmse, echo=FALSE}
 performance_metric <- data.frame(type=character(),value=numeric()) %>% 
   add_row(type='Current RMSE Max',value=RMSE_value_based_on_max) %>% 
@@ -416,7 +403,7 @@ rm(geolocation_dataset, order_items_dataset, orders_dataset, product_category_na
 
 
 ```{r Method to derive distance data, include = FALSE}
-# we will use distGeo from geosphere package to compute distance in km between seller and customer. considered to be highly accurate. if it takes more time, we can consider using distVincentyEllipsoid or distHaversine as we are fine with accuracy of a km.
+# we will use distGeo from geosphere package to compute distance in km between seller and customer. considered to be highly accurate.
 extract_distance_between_seller_customer <- function(df) { 
   df %>% mutate(distance_between_two_points=round(distGeo(
     matrix(c(geolocation_lng_seller,geolocation_lat_seller),ncol=2),
@@ -485,8 +472,6 @@ validation_dataset <- validation_dataset %>%
   semi_join(training_dataset,by='product_category_name') %>%
   semi_join(training_dataset,by='seller_id') %>% 
   semi_join(training_dataset,by="customer_zip_code_prefix")
-## TODO review if we want to change this join
-# validation_dataset <- validation_dataset %>% semi_join(training_dataset,by='seller_id')
 
 rm(test_indices)
 ```
@@ -1170,9 +1155,6 @@ For the above analysis, knn model was used, given that it does not make assumpti
   weights <- seq(0,10,5)
   
   weight_to_use_per_partition <- sapply(1:3, function(index) {
-  #lambda_data_set <- prepare_lambda_data_set(index)
-  #train_lambda_set <- lambda_data_set[[1]]
-  #test_lambda_set <- lambda_data_set[[2]]  
   train_weight_set <- train_subset_for_encoding[-test_weight_indices[,index],]
   test_weight_set <- train_subset_for_encoding[test_weight_indices[,index],]
   
@@ -1182,9 +1164,10 @@ For the above analysis, knn model was used, given that it does not make assumpti
     semi_join(train_weight_set,by='customer_zip_code_prefix')
   
   dataset_list <- enhance_datasets_with_derived_features(train_weight_set,test_weight_set,TRUE)
-  train_weight_set <- dataset_list[[1]] %>% select(-seller_id)#,-customer_zip_code_prefix)
-  test_weight_set <- dataset_list[[2]] %>% select(-seller_id)#,-customer_zip_code_prefix)
+  train_weight_set <- dataset_list[[1]] %>% select(-seller_id)
+  test_weight_set <- dataset_list[[2]] %>% select(-seller_id)
   
+  # calculating rmse for each weight
   weight_rmses <- sapply(weights, function(weight) {
       product_category_effects <- train_weight_set %>% 
         group_by(product_category_name) %>% 
@@ -1201,13 +1184,6 @@ For the above analysis, knn model was used, given that it does not make assumpti
       
       scaled_train_subset <- predict(preProcessScalingValues, train_weight_set)
       scaled_test_subset <- predict(preProcessScalingValues, test_weight_set)
-      
-      # TODO remove below scaling was erroneous. train scaling needs to be used for test data
-      # below is just demo of how to use scale
-      # scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
-      # scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
-      
-      # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
       tuningControl=trainControl(method = "cv", number = 3)
       knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(41,47,53)),trControl=tuningControl)
@@ -1266,9 +1242,6 @@ Given the influence, we decided to consider this as a feature for further analys
   weights <- seq(0,9,3)
   
   weight_to_use_per_partition <- sapply(1:3, function(index) {
-  #lambda_data_set <- prepare_lambda_data_set(index)
-  #train_lambda_set <- lambda_data_set[[1]]
-  #test_lambda_set <- lambda_data_set[[2]]  
   train_weight_set <- train_subset_for_encoding[-test_weight_indices[,index],]
   test_weight_set <- train_subset_for_encoding[test_weight_indices[,index],]
   
@@ -1292,6 +1265,7 @@ Given the influence, we decided to consider this as a feature for further analys
   test_weight_set <- dataset_list[[2]] %>% select(-order_purchase_timestamp,-handed_over_to_carrier_date,-shipping_limit_date,-customer_zip_code_prefix,-payment_approved_at,-product_category_name)
   ##
   
+  # calculating rmse for each weight
   weight_rmses <- sapply(weights, function(weight) {
       seller_id_effects <- train_weight_set %>% 
         group_by(seller_id) %>% 
@@ -1308,13 +1282,6 @@ Given the influence, we decided to consider this as a feature for further analys
       
       scaled_train_subset <- predict(preProcessScalingValues, train_weight_set)
       scaled_test_subset <- predict(preProcessScalingValues, test_weight_set)
-      
-      # TODO remove below scaling was erroneous. train scaling needs to be used for test data
-      # below is just demo of how to use scale
-      # scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
-      # scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
-      
-      # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
       tuningControl=trainControl(method = "cv", number = 3)
       knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(41,47,53)),trControl=tuningControl)
@@ -1372,9 +1339,6 @@ Given the influence, we decided to consider this as a feature for further analys
   weights <- seq(0,30,15)
   
   weight_to_use_per_partition <- sapply(1:3, function(index) {
-  #lambda_data_set <- prepare_lambda_data_set(index)
-  #train_lambda_set <- lambda_data_set[[1]]
-  #test_lambda_set <- lambda_data_set[[2]]  
   train_weight_set <- train_subset_for_encoding[-test_weight_indices[,index],]
   test_weight_set <- train_subset_for_encoding[test_weight_indices[,index],]
   
@@ -1408,7 +1372,8 @@ Given the influence, we decided to consider this as a feature for further analys
   train_weight_set <- dataset_list[[1]] %>% select(-seller_id)
   test_weight_set <- dataset_list[[2]] %>% select(-seller_id)
   ##
-  
+
+  # calculating rmse for each weight
   weight_rmses <- sapply(weights, function(weight) {
       customer_state_effects <- train_weight_set %>% 
         group_by(customer_state) %>% 
@@ -1425,13 +1390,6 @@ Given the influence, we decided to consider this as a feature for further analys
       
       scaled_train_subset <- predict(preProcessScalingValues, train_weight_set)
       scaled_test_subset <- predict(preProcessScalingValues, test_weight_set)
-      
-      # TODO remove below scaling was erroneous. train scaling needs to be used for test data
-      # below is just demo of how to use scale
-      # scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
-      # scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
-      
-      # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
       tuningControl=trainControl(method = "cv", number = 3)
       knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(34,41,48)),trControl=tuningControl)
@@ -1491,9 +1449,6 @@ Given the influence, we decided to consider this as a feature for further analys
   weights <- seq(0,10,5)
   
   weight_to_use_per_partition <- sapply(1:3, function(index) {
-  #lambda_data_set <- prepare_lambda_data_set(index)
-  #train_lambda_set <- lambda_data_set[[1]]
-  #test_lambda_set <- lambda_data_set[[2]]  
   train_weight_set <- train_subset_for_encoding[-test_weight_indices[,index],]
   test_weight_set <- train_subset_for_encoding[test_weight_indices[,index],]
   
@@ -1535,6 +1490,7 @@ Given the influence, we decided to consider this as a feature for further analys
   test_weight_set <- dataset_list[[2]]
   ##
   
+  # calculating rmse for each weight
   weight_rmses <- sapply(weights, function(weight) {
       customer_loc_effects <- train_weight_set %>% 
         group_by(customer_loc) %>% 
@@ -1551,13 +1507,6 @@ Given the influence, we decided to consider this as a feature for further analys
       
       scaled_train_subset <- predict(preProcessScalingValues, train_weight_set)
       scaled_test_subset <- predict(preProcessScalingValues, test_weight_set)
-      
-      # TODO remove below scaling was erroneous. train scaling needs to be used for test data
-      # below is just demo of how to use scale
-      # scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
-      # scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
-      
-      # TODO can we skip modelling while evaluating weight to use or for target encoding?
       
       tuningControl=trainControl(method = "cv", number = 3)
       knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(35,43,49)),trControl=tuningControl)
@@ -1670,12 +1619,6 @@ preProcessScalingValues <- preProcess(train_subset %>% select(-number_of_hours),
 scaled_train_subset <- predict(preProcessScalingValues, train_subset) 
 scaled_test_subset <- predict(preProcessScalingValues, test_subset) 
 
-# TODO remove below scaling was erroneous. train scaling needs to be used for test data
-# below is just demo of how to use scale
-# scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
-# scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
-
-
 tuningControl=trainControl(method = "cv", number = 5)
 knn_fit <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(45,71,77,83)),trControl=tuningControl)
 
@@ -1727,7 +1670,6 @@ To train and tune random forest model, we carried our 4-fold cross validation pr
 set.seed(seed=1,sample.kind = 'Rounding')
 tuningControl=trainControl(method = "cv", number = 4)
 rf_fit <- train(number_of_hours~., train_subset, method='rf',tuneGrid = data.frame(mtry = c(1,2,3,4,5)),trControl=tuningControl,ntree=200)
-#rf_fit <- train(number_of_hours~., train_subset %>% select(-seller_state), method='rf',tuneGrid = data.frame(mtry = seq(5, 50, 10)),trControl=tuningControl,ntree=250) # nodesize = 50,maxnodes=2000,ntree=200
 
 save(rf_fit,file='rda/rf_model.rda')
 ```
@@ -1748,7 +1690,7 @@ performance_metric <- performance_metric %>%
           value=RMSE((test_subset %>% pull(number_of_hours)),predictions))
 
 performance_metric
-# 173.3481 for mtry 2. Technically there are total of 11 predictors. The seller_state was not of much help. it was actually increasing RMSE. So have ignored it.
+# 173.3481 for mtry 2. There are total of 11 predictors.
 ```
 
 Based on model results, mtry value of `r rf_fit$finalModel$mtry` was identified to be the one with lowest RMSE.
@@ -1779,19 +1721,10 @@ predictions_rf <- predict(rf_fit,test_subset %>% select(-number_of_hours))
 predictions_df <- data.frame(predictions_knn,predictions_rf)
 
 # mean approach
-
 performance_metric <- performance_metric %>% 
   add_row(type='Avg based ensemble model(partial dataset)',
           value=RMSE(rowMeans(predictions_df),(test_subset %>% pull(number_of_hours) )))
 #175.7183
-
-# max approach
-RMSE(predictions_df %>% mutate(max=pmax(predictions_knn,predictions_rf)) %>% pull(max),(test_subset %>% pull(number_of_hours)))
-#177.7854
-
-# min approach
-RMSE(predictions_df %>% mutate(min=pmin(predictions_knn,predictions_rf)) %>% pull(min),(test_subset %>% pull(number_of_hours)))
-#178.7218
 ```
 
 ```{r Save performance metric, include=FALSE, eval=FALSE}
