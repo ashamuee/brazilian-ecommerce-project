@@ -1,5 +1,5 @@
 ---
-title: "CYO Project Report - Delivery Estimation System"
+title: "CYO Project Report - Delivery Prediction System"
 author: "Asham Vohra"
 date: "6/21/2021"
 output:
@@ -34,8 +34,7 @@ This report walks through the approach, analysis and evaluation carried out to a
 
 ## Data Wrangling
 ```{r Install or load packages,include=FALSE, echo = FALSE}
-# TODO use conditional loading or installation of library
-# Remove plotly related code for pdfs
+#Install or load packages
 if (!require('dplyr')) install.packages('dplyr'); library('dplyr')
 if (!require('lubridate')) install.packages('lubridate'); library('lubridate')
 if (!require('tidyverse')) install.packages('tidyverse'); library('tidyverse')
@@ -128,11 +127,13 @@ orders_dataset <- read.csv(file.path('data','olist_orders_dataset.csv'),header=T
          order_delivered_customer_date=as_datetime(order_delivered_customer_date),
          order_estimated_delivery_date=as_datetime(order_estimated_delivery_date))
 
-# TODO if we are not using payment_approved_at or few fields we can remove the filter logic based on that.
+# Filtered out any orders where delivery was not made 
+# Also filtered out orders where delivery was made but required delivery time columns were not available.
 orders_dataset <- orders_dataset %>% 
   filter(order_status=='delivered') %>% 
   filter( !is.na(order_estimated_delivery_date ) & !is.na(order_delivered_customer_date ) & !is.na(handed_over_to_carrier_date) & !is.na(payment_approved_at) & !is.na(order_purchase_timestamp))
 
+# check how they are structured
 orders_dataset %>% head()
 orders_dataset %>% str()
 ```
@@ -160,6 +161,7 @@ In order to leverage this dataset properly, we carried out below steps:
 # freight_value --> item freight value item (if an order has more than one item the freight value is splitted between items)
 order_items_dataset <- read.csv(file.path('data','olist_order_items_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(shipping_limit_date=as_datetime(shipping_limit_date))  %>% select(-order_item_id)
 
+# check how they are structured
 order_items_dataset %>% str()
 order_items_dataset %>% head()
 ```
@@ -184,51 +186,26 @@ In order to be able to use this data with other data sets available like custome
 
 ```{r Data wrangling- geolocation data set, include=FALSE, echo=FALSE}
 # geo location details
-# in brazil while 5 digits zip code is good enough to identify state, it may not be correct to identify city
-# it can have geolocation_zip_code_prefix shared across multiple places
+# In brazil zip code is 8 digits. So first 5 digits zip code is good enough to identify an area but it does not uniquely identify customer location.
+# So because of this, there are multiple rows for same geolocation_zip_code_prefix
 # refer: https://codigo-postal.org/en-us/brazil/
-# The Postal Code Address (CEP) is an eight-digit number set that has by main objective to guide and accelerate the distribution of objects sent through the national mail in Brazil. The current structure of the Brazilian postal code is 8 (eight) digits, divided into two parts:
+#
+# The first five digits represent the 1) region, 2) sub-region, 3) sector, 4) subsector, 5) subsector divider;
+geolocation_dataset <- read.csv(file.path('data','olist_geolocation_dataset.csv'),
+                                header=TRUE,stringsAsFactors = FALSE) %>%
+  select(-geolocation_city,-geolocation_state) 
 
-# first part composed of 5 digits where each digit represents the 1) region, 2) sub-region, 3) sector, 4) subsector, 5) subsector divider;
-# the second part is composed of 3 digits, separated by a hyphen from the first part and represents the Distribution Identifiers.
-# You can navigate through states, then cities and finally neighborhoods and streets until you find the corresponding postal code.
-
-
-# geolocation_dataset <- read.csv(file.path('data','olist_geolocation_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) 
-geolocation_dataset <- read.csv(file.path('data','olist_geolocation_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% select(-geolocation_city,-geolocation_state) 
-
-
+# check how they are structured
 geolocation_dataset %>% head()
 geolocation_dataset %>% str()
 
-
-# Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
-# initially we can see 
-# geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
-
-# post transformation to resolve any Accent or special characters from the city name
-# geolocation_dataset <- geolocation_dataset %>% mutate(geolocation_city=stri_trans_general(geolocation_city,"Any-ASCII"))
-
-# above is not done as the way zip codes are in brazil, first five digits can correspond to different cities and so we will remove the city. We also removed state as there seems to be incorrect entries in the sellers data. This either needs to be fixed or we can limit ourselves to lat/long value
-
-
-# geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% nrow()
+# check count of rows per geolocation_zip_code_prefix
+geolocation_dataset %>% dplyr::count(geolocation_zip_code_prefix) %>% nrow()
 
 # as each geolocation_zip_code_prefix can have many data points, we will limit these to one by taking mean for lat, long location
-geolocation_dataset <- geolocation_dataset %>% group_by(geolocation_zip_code_prefix) %>% summarise(geolocation_lat=mean(geolocation_lat),geolocation_lng=mean(geolocation_lng)) %>% ungroup()
-#geolocation_dataset <- geolocation_dataset %>% group_by(geolocation_zip_code_prefix,geolocation_city,geolocation_state) %>% summarise(geolocation_lat=mean(geolocation_lat),geolocation_lng=mean(geolocation_lng)) %>% ungroup()
-
-# TODO review it
-#%>% mutate(geolocation_state=as.factor(geolocation_state)) 
-# TODO review if geolocation_zip_code_prefix and geolocation_city can have multiple states with them.
-
-# remove whitespace before and after reduces one city
-# still issues are there and can be seen by
-# zip_codes_of_interest <- geolocation_dataset %>% mutate(geolocation_city=str_trim(geolocation_city)) %>% dplyr::count(geolocation_zip_code_prefix) %>% filter(n>1)  %>% pull(geolocation_zip_code_prefix)
-
-# geolocation_dataset %>% filter(geolocation_zip_code_prefix %in% zip_codes_of_interest) %>% view()
-# to filter out duplicates
-# we need not worry about city or state, we can pick any as long as lat, lng values are similar
+geolocation_dataset <- geolocation_dataset %>% group_by(geolocation_zip_code_prefix) %>% 
+  summarise(geolocation_lat=mean(geolocation_lat),geolocation_lng=mean(geolocation_lng)) %>%
+  ungroup()
 ```
 
 The wrangled data looks like below:
@@ -252,8 +229,8 @@ To be able to leverage either of these datasets for analysis later, we carried o
 # customer_id ----> key to the orders dataset. Each order has a unique customer_id.
 # customer_zip_code_prefix --> first five digits of customer zip code
 customers_dataset <- read.csv(file.path('data','olist_customers_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) 
-# %>% mutate(customer_zip_code_prefix=as.factor(customer_zip_code_prefix),customer_id=as.character(customer_id ))
 
+# check how they are structured
 customers_dataset %>% head()
 customers_dataset %>% str()
 ```
@@ -262,20 +239,14 @@ customers_dataset %>% str()
 # seller data set with zip code prefix
 # seller_zip_code_prefix --> first 5 digits of seller zip code
 sellers_dataset <- read.csv(file.path('data','olist_sellers_dataset.csv'),header=TRUE,stringsAsFactors = FALSE)
-# TODO review if we need it
-# %>% mutate(seller_zip_code_prefix=as.factor(seller_zip_code_prefix),seller_id=as.character(seller_id ))
 
+# check how they are structured
 sellers_dataset %>% head()
 sellers_dataset %>% str()
 ```
 
 ```{r Refine sellers dataset, include=FALSE, echo=FALSE}
 # Filter out data where sellers location details are not available
-#
-# Important: many geolocation_city have same name but different ascent component. Example: niteroi and niterói
-# These all need to be handled in data wrangling
-
-
 # we noticed some seller_zip_code_prefix are not present in geolocation dataset. So we will ignore them
 sellers_to_ignore <- sellers_dataset %>% anti_join(geolocation_dataset,by=c('seller_zip_code_prefix'='geolocation_zip_code_prefix')) 
 
@@ -1685,14 +1656,11 @@ The derived features selected earlier were prepared based on train_subset and ap
 In addition, as earlier shared, categorical features were converted to numeric form with the help of target encoding with a weight term computed earlier for purpose of regularization and to avoid overfitting. Also, any undesired features were removed, reducing train_subset and test_subset to only the desired features.
 
 ### k-nearest neighbors(knn) model
-k-nearest neighbors(knn) being based on data points of nearest neighbours was a good starting point. And the fact that knn model does not make assumptions about the dataset, made it a good candidate for initial performance evaluation. 
+k-nearest neighbors(knn) relies on finding nearest neighbors and uses average of the nearest neigbbors for prediction. In addition, it does not make assumptions about the dataset. In our case limited dataset and that the alogrithm does not make any assumptions, made it a good candidate for model development and performance evaluation. 
 
-To use knn model, features were scaled and normalized to prevent overfitting as knn internally calculates Euclidean distance for finding the nearest data-points. 
+To use knn model, features were scaled and normalized to prevent bias towards any features, as knn internally calculates Euclidean distance for finding the nearest data-points. 
 
-In addition, for knn model training and tuning, we carried our 5-fold cross validation, which helped to remove any randomness from our tuning parameters. This helped reduced the probability of overfitting.
- 
-5-fold cross validation was carried out.
-80/20 split
+In addition, for knn model training and tuning, we carried our 5-fold cross validation providing a range of values of k to use for training the model. Here, k means number of neighbors to be considered. The cross validation helped in removing any randomness from our tuning parameters. In addition, this helped reduce the probability of overfitting.
 
 ```{r knn model data scaled under test, include=FALSE, eval=FALSE}
 ## TODO make echo=FALSE 
@@ -1709,10 +1677,23 @@ scaled_test_subset <- predict(preProcessScalingValues, test_subset)
 
 
 tuningControl=trainControl(method = "cv", number = 5)
-knn_fit <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(56,63,70,77)),trControl=tuningControl)
+knn_fit <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(45,71,77,83)),trControl=tuningControl)
 
+save(knn_fit,file='rda/knn_model.rda')
+```
+
+Details of the trained knn model can be found below:
+ 
+```{r trained knn model based on train_subset, echo=FALSE }
+load('rda/knn_model.rda')
 knn_fit
 
+knn_fit %>% ggplot()
+```
+
+Based on model results, k value of `r knn_fit$finalModel$k` was identified to be the one with lowest RMSE.
+
+```{r trained knn model validation, include=FALSE, eval=FALSE}
 predictions <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
 
 performance_metric <- performance_metric %>% 
@@ -1722,21 +1703,24 @@ performance_metric <- performance_metric %>%
 performance_metric
 #183.0028 for k=77
 
-save(knn_fit,file='rda/knn_model.rda')
+save(performance_metric,file='rda/performance_metric.rda')
 ```
 
+Below is the summary of each model and knn model(which used partial dataset) against the performance metric i.e. RMSE
 
-Regression problem.
-Algorithms considered
-- Random Forest
-- knn - k nearest neighbors 
-- gam
+```{r performance metric for knn model based on test data, echo =FALSE}
+load('rda/performance_metric.rda')
+performance_metric[1:3,] %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
+```
 
+As we can see the performance metric i.e. RMSE is significantly better for knn model (though with partial dataset at this point of time), than the one being used by Olist store.
 
 ### Random forest model
-However, it is important to know your data and keep in mind that a Random Forest can’t extrapolate. It can only make a prediction that is an average of previously observed labels. In this sense it is very similar to KNN.
-In other words, in a regression problem, the range of predictions a Random Forest can make is bound by the highest and lowest labels in the training data. This behavior becomes problematic in situations where the training and prediction inputs differ in their range and/or distributions. This is called covariate shift and it is difficult for most models to handle but especially for Random Forest, because it can’t extrapolate.
-From : https://towardsdatascience.com/a-limitation-of-random-forest-regression-db8ed7419e9f
+Next, we used Random forest model, which is basically ensemble of multiple decision trees. The training dataset is split into multiple subsets. For each such subset, decision tree is created. However, randomness is introduced in creation of decision trees as at each node, the tree leverages a number of random features to determine the best split. Once the various models are ready, they are used to prepare predictions. The final prediction is reached by taking average of all the trees.
+
+The ensemble of multiple decision trees helps prevent overfitting and creates a more stable prediction. While, the number of random features at each node of decision tree to determine best split, helps reduce bias and variance in the model. It is these qualities of random forest, which prompted us to consider this for model development and evaluation.
+
+To train and tune random forest model, we carried our 4-fold cross validation providing a range of values of mtry to use for training the model. Here, mtry means number of random features used to determine the best split at each node of the decision tree. In addition, we configured the number of decision trees to create as 200. Here, the cross validation not only helped to reduce the probability of overfitting but also helped in identifying the tuning parameter i.e. mtry which would work across randomly selected datasets. 
 
 ```{r rf model, include= FALSE, eval = FALSE}
 # TODO make it echo=FALSE
@@ -1745,8 +1729,18 @@ tuningControl=trainControl(method = "cv", number = 4)
 rf_fit <- train(number_of_hours~., train_subset, method='rf',tuneGrid = data.frame(mtry = c(1,2,3,4,5)),trControl=tuningControl,ntree=200)
 #rf_fit <- train(number_of_hours~., train_subset %>% select(-seller_state), method='rf',tuneGrid = data.frame(mtry = seq(5, 50, 10)),trControl=tuningControl,ntree=250) # nodesize = 50,maxnodes=2000,ntree=200
 
+save(rf_fit,file='rda/rf_model.rda')
+```
+
+Details of the trained random forest model can be found below:
+```{r trained random forest model based on train_subset, echo=FALSE}
+load('rda/rf_model.rda')
 rf_fit
 
+rf_fit %>% ggplot()
+```
+
+```{r trained random forest model validation, include=FALSE, eval=FALSE}
 predictions <- predict(rf_fit,test_subset %>% select(-number_of_hours))
 
 performance_metric <- performance_metric %>% 
@@ -1755,14 +1749,26 @@ performance_metric <- performance_metric %>%
 
 performance_metric
 # 173.3481 for mtry 2. Technically there are total of 11 predictors. The seller_state was not of much help. it was actually increasing RMSE. So have ignored it.
-
-save(rf_fit,file='rda/rf_model.rda')
 ```
 
-==TODO include gam model if required.
+Based on model results, mtry value of `r rf_fit$finalModel$mtry` was identified to be the one with lowest RMSE.
+
+Below is the summary of each model and random forest model(which used partial dataset) against the performance metric i.e. RMSE
+
+```{r performance metric for random forest model based on test data, echo =FALSE}
+load('rda/performance_metric.rda')
+performance_metric[1:4,] %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
+```
+
+As we can see the performance metric i.e. RMSE was significantly better for random forest model (though with partial dataset at this point of time), than the one being used by Olist store. In addition, we could see improvement in RMSE when compared to knn model for the same dataset.
 
 ### Ensemble model 
-```{r Ensemble, include=FALSE, eval= FALSE}
+The ensemble models use multiple algorithms and if properly developed, they can be built to take learnings from the different models and generate better predictions. Since we had knn and random forest models tuned and prepared, we used them to create variety of ensemble models.
+
+#### Average based ensemble model
+We took previously trained and tuned knn and random forest model and created ensemble of both. For this, predictions using both knn and random forest models were computed. Then mean of the predicitions was taken. This was used to calculate performance metric i.e. RMSE.
+
+```{r Ensemble of knn and rf model using partial data, include=FALSE, eval= FALSE}
 load('rda/knn_model.rda')
 load('rda/rf_model.rda')
 set.seed(1, sample.kind = 'Rounding')
@@ -1775,7 +1781,7 @@ predictions_df <- data.frame(predictions_knn,predictions_rf)
 # mean approach
 
 performance_metric <- performance_metric %>% 
-  add_row(type='Ensemble model(partial dataset)',
+  add_row(type='Avg based ensemble model(partial dataset)',
           value=RMSE(rowMeans(predictions_df),(test_subset %>% pull(number_of_hours) )))
 #175.7183
 
@@ -1792,13 +1798,50 @@ RMSE(predictions_df %>% mutate(min=pmin(predictions_knn,predictions_rf)) %>% pul
 save(performance_metric,file='rda/performance_metric.rda')
 ```
 
-```{r Load performance metric, include=FALSE}
+Below is the summary of each model and ensemble model(which used partial dataset) against the performance metric i.e. RMSE
+
+```{r performance metric for ensemble model based on test data, echo =FALSE}
 # required only to generate report
 load('rda/performance_metric.rda')
+performance_metric[1:5,] %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
 ```
 
+As we can see the performance metric i.e. RMSE was significantly better for ensemble model (though with partial dataset at this point of time), than the one being used by Olist store. However, it was not better than the performance metric captured for random forest model.
+
+#### Weighted average based ensemble model
+Other alternative ensemble technique like weighted average approach was explored. Again, we took previously trained and tuned knn and random forest model and created ensemble of both. However, this time, final predictions were based on weighted average of the predictions of the constituient models. 
+
+The results of performance metric i.e. RMSE for the ensemble model against increasing weights for knn model based predictions are plotted on the graph.
+
+```{r weighted average ensemble approach with partial dataset, include=FALSE, eval=FALSE}
+# weighted approach
+rmses_weighted_ensemble_model <- sapply(seq(0,1,0.15),function(a) {
+  RMSE((test_subset %>% pull(number_of_hours)),
+        predictions_df %>% mutate(value=predictions_knn*a+predictions_rf*(1-a)) %>% 
+          pull(value)
+       )
+  })
+save(rmses_weighted_ensemble_model,file='rda/rmses_weighted_ensemble_model.rda')
+```
+
+```{r Summary of performance metric for weighted ensemble approach, echo=FALSE}
+load('rda/rmses_weighted_ensemble_model.rda')
+weights_for_ensemble_model <- seq(0,1,0.15)
+
+data.frame(weight_for_knn_pred=weights_for_ensemble_model,rmse=rmses_weighted_ensemble_model) %>%
+  ggplot(aes(weight_for_knn_pred,rmse)) + geom_line() + geom_point() + 
+  xlab('Weight used(for knn prediction)') + ylab('Resultant RMSE')
+```
+
+We noted that weighted ensemble model had lowest RMSE of `r min(rmses_weighted_ensemble_model)` at weight=`r weights_for_ensemble_model[which.min(rmses_weighted_ensemble_model)]`
+
+In addition, other ensembling techniques like stacking were explored, however they could not improve the RMSE.
+
+### Selected model
+Given above results of performance metric i.e. RMSE across knn, random forest and ensemble models, we selected random forest as the final model for our delivery prediction system.
+
 # Results
-Post model tuning and evaluation, random forest algorithm emerged as the right fit for our data. The tuning parameters identified for the final random forest algorithm are shared below:
+Post model tuning and evaluation, random forest model emerged as the best fit for our data among the models considered for selection. The tuning parameters identified for the final random forest algorithm are shared below:
 
 ```{r Tuning parameters to use for final random forest, echo=FALSE}
 load('rda/rf_model.rda')
@@ -1839,11 +1882,15 @@ ntree_to_use <- 500 #rf_fit$finalModel$ntree
 
 final_model <- randomForest(number_of_hours~., training_dataset,mtry= mtry_to_use, ntree=ntree_to_use)
 
-final_model
-
 save(final_model,file='rda/final_model.rda')
 ```
 
+```{r trained final random forest model based on training_dataset, echo=FALSE}
+load('rda/final_model.rda')
+#final_model
+
+plot(final_model,main='Random forest model error against number of trees')
+```
 
 ```{r Final model validation, include = FALSE, eval=FALSE}
 # TODO marked eval=FALSE to prevent it from running during report generation
@@ -1857,11 +1904,11 @@ performance_metric <- performance_metric %>%
 performance_metric
 ```
 
-Below is the summary of model against the performance metric i.e. RMSE
+Below is the summary of models against the performance metric i.e. RMSE
 ```{r Performance metric post final model validation, echo=FALSE}
 performance_metric %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
 ```
-```
+
 
 ```{r Final knn model traing with data scaled, include=FALSE, eval= FALSE}
 set.seed(seed=1,sample.kind = 'Rounding')
@@ -1901,11 +1948,11 @@ RMSE(rowMeans(predictions_df),(validation_dataset %>% pull(number_of_hours) ))
 For the **final model**, the performance metric i.e. RMSE = **`r performance_metric %>% filter(type=='Final model') %>% pull(value)`** captured against **validation_dataset** was much better than what Olist store had as identified from the dataset. The newly built model can be used for predicting number of hours required for delivery of a given ordered item.
 
 # Conclusion
-As part of this project, the goal was to build a delivert prediction system which could predict the number of hours required to delivered the ordered item rating with minimal RMSE. 
+As part of this project, the goal was to build a delivery prediction system which could predict the number of hours required to delivered the ordered item rating with minimal RMSE. 
 
 During the course of project, we carried out data cleaning, identified features and derived features from existing information available. In addition, converted categorical features to numeric form and applied various techniques like target encoding, scaling and normalization as required and regularized the required features. 
 
-Once the feature analysis and selection was completed, we used the features to tune models like k-nearest neighbours, random forest. We carried out k-fold cross validation to remove any randomness from the model training and tuning process. Finally we reached to a model which performs within desired range of RMSE and can be useful for predicting number of hours required for delivery of a given ordered item. Due care was taken to prevent overfitting from influencing our model.
+Once the feature analysis and selection was completed, we used the features to tune models like k-nearest neighbors, random forest. We carried out k-fold cross validation to remove any randomness from the model training and tuning process. This additionally helped to reduce probability of overfitting. Post this, we explored multiple ensemble models using techniques like averaging, weighted average, stacking, among others. Finally we selected random forest based model and the model so trained performs within desired range of RMSE and can be useful for predicting number of hours required for delivery of a given ordered item. Due care was taken to prevent overfitting from influencing our model.
 
 While the model is a significant improvement over what Olist store had, there is lot of room to improve it. It can be improved for incremental learning so that it can learn from new orders and their delivery details once they become available. In addition, it could be improved to handle new sellers or product categories.
 
