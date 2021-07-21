@@ -1630,13 +1630,26 @@ save(knn_fit,file='rda/knn_model.rda')
 Details of the trained knn model can be found below:
  
 ```{r trained knn model based on train_subset, echo=FALSE }
-load('rda/knn_model.rda')
-knn_fit
-
-knn_fit %>% ggplot()
+if(file.exists('rda/knn_model.rda')) { 
+  load('rda/knn_model.rda'); 
+  print(knn_fit);
+} else {
+  lines <- readLines('captured-outputs/knn_model_output.txt')
+  cat(lines,sep="\n")
+  
+  rm(lines)
+}
 ```
 
-Based on model results, k value of `r knn_fit$finalModel$k` was identified to be the one with lowest RMSE.
+```{r print plot for knn model based on train_subset, echo=FALSE, out.width ="100%", fig.align='center'}
+if(file.exists('rda/knn_model.rda')) { 
+    knn_fit %>% ggplot() 
+} else {
+  knitr::include_graphics('captured-outputs/knn_model_plot.png')
+}
+```
+
+Based on model results, k value of `r if(exists("knn_fit",mode="list")) { knn_fit$finalModel$k } else {77}` was identified to be the one with lowest RMSE.
 
 ```{r trained knn model validation, include=FALSE, eval=FALSE}
 predictions <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
@@ -1678,10 +1691,23 @@ save(rf_fit,file='rda/rf_model.rda')
 
 Details of the trained random forest model can be found below:
 ```{r trained random forest model based on train_subset, echo=FALSE}
-load('rda/rf_model.rda')
-rf_fit
+if(file.exists('rda/rf_model.rda')) { 
+  load('rda/rf_model.rda'); 
+  print(rf_fit);
+} else {
+  lines <- readLines('captured-outputs/rf_model_output.txt')
+  cat(lines,sep="\n")
+  
+  rm(lines)
+}
+```
 
-rf_fit %>% ggplot()
+```{r print plot for rf model based on train_subset, echo=FALSE, out.width ="100%", fig.align='center'}
+if(file.exists('rda/rf_model.rda')) { 
+    rf_fit %>% ggplot() 
+} else {
+  knitr::include_graphics('captured-outputs/rf_model_plot.png')
+}
 ```
 
 ```{r trained random forest model validation, include=FALSE, eval=FALSE}
@@ -1695,7 +1721,7 @@ performance_metric
 # 173.3481 for mtry 2. There are total of 11 predictors.
 ```
 
-Based on model results, mtry value of `r rf_fit$finalModel$mtry` was identified to be the one with lowest RMSE.
+Based on model results, mtry value of `r if(exists("rf_fit",mode="list")) { rf_fit$finalModel$mtry } else {2}` was identified to be the one with lowest RMSE.
 
 Below is the summary of each model and random forest model(which used partial dataset) against the performance metric i.e. RMSE
 
@@ -1779,9 +1805,15 @@ Given above results of performance metric i.e. RMSE across knn, random forest an
 Post model tuning and evaluation, random forest model emerged as the best fit for our data among the models considered for selection. The tuning parameters identified for the final random forest algorithm are shared below:
 
 ```{r Tuning parameters to use for final random forest, echo=FALSE}
-load('rda/rf_model.rda')
+mtry_value <- 2
+if(file.exists('rda/rf_model.rda')) { 
+  load('rda/rf_model.rda');
+  mtry_value = rf_fit$finalModel$mtry
+} 
 
-data.frame(tuning_parameter='mtry', value=rf_fit$finalModel$mtry) %>% add_row(tuning_parameter='number_of_trees', value=500) %>% knitr::kable(caption='Random forest tuning parameters')
+data.frame(tuning_parameter='mtry', value=mtry_value) %>% add_row(tuning_parameter='number_of_trees', value=500) %>% knitr::kable(caption='Random forest tuning parameters')
+
+rm(mtry_value)
 ```
 
 Till this point, we had used only training data set i.e. training_dataset to identify the features, evaluate various models and tune them. Having selected the final model, we prepared first the derived features, which as shared earlier were prepared on training_dataset. The features were then applied over validation_dataset, which was the dataset kept aside till now.
@@ -1820,11 +1852,27 @@ final_model <- randomForest(number_of_hours~., training_dataset,mtry= mtry_to_us
 save(final_model,file='rda/final_model.rda')
 ```
 
-```{r trained final random forest model based on training_dataset, echo=FALSE}
-load('rda/final_model.rda')
-#final_model
+Details of the final trained random forest model can be found below:
 
-plot(final_model,main='Random forest model error against number of trees')
+```{r trained final random forest model based on training_dataset, echo=FALSE}
+if(file.exists('rda/final_model.rda')) {
+  load('rda/final_model.rda')
+  sink('captured-outputs/final_model_output.txt')
+  print(final_model)
+  sink()
+}
+
+lines <- readLines('captured-outputs/final_model_output.txt')
+cat(lines,sep="\n")
+
+if(exists("final_model",mode="list")) {
+  plot(final_model,main='Random forest model error against number of trees')
+} else {
+  plot_object <- readRDS('rds/final_model_plot.rds')
+  plot(plot_object,type='l',main='Random forest model error against number of trees', xlab='trees', ylab='Error')
+  
+  rm(plot_object)
+}
 ```
 
 ```{r Final model validation, include = FALSE, eval=FALSE}
@@ -1842,42 +1890,6 @@ performance_metric
 Below is the summary of models against the performance metric i.e. RMSE
 ```{r Performance metric post final model validation, echo=FALSE}
 performance_metric %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
-```
-
-
-```{r Final knn model traing with data scaled, include=FALSE, eval= FALSE}
-set.seed(seed=1,sample.kind = 'Rounding')
-preProcessScalingValues <- preProcess(training_dataset %>% select(-number_of_hours), method = c("center", "scale"))
-
-scaled_train_subset <- predict(preProcessScalingValues, training_dataset) 
-scaled_test_subset <- predict(preProcessScalingValues, validation_dataset) 
-
-final_knn_fit <- knnreg(number_of_hours~., scaled_train_subset,k = knn_fit$finalModel$k)
-
-final_knn_fit
-
-predictions <- predict(final_knn_fit,scaled_test_subset %>% select(-number_of_hours))
-
-RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
-# 202.8552
-
-save(final_knn_fit,file='rda/final_knn_fit.rda')
-```
-
-
-```{r Final ensemble model, include=FALSE, eval= FALSE}
-load('rda/final_knn_fit.rda')
-load('rda/final_model.rda')
-
-set.seed(seed=1,sample.kind = 'Rounding')
-
-predictions_knn <- predict(final_knn_fit,scaled_test_subset %>% select(-number_of_hours))
-predictions_rf <- predict(final_model,validation_dataset %>% select(-number_of_hours))
-
-predictions_df <- data.frame(predictions_knn,predictions_rf)
-
-RMSE(rowMeans(predictions_df),(validation_dataset %>% pull(number_of_hours) ))
-# 193.3459
 ```
 
 For the **final model**, the performance metric i.e. RMSE = **`r performance_metric %>% filter(type=='Final model') %>% pull(value)`** captured against **validation_dataset** was much better than what Olist store had as identified from the dataset. The newly built model can be used for predicting number of hours required for delivery of a given ordered item.

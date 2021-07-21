@@ -1,0 +1,11 @@
+
+Call:
+ randomForest(formula = number_of_hours ~ ., data = training_dataset, 
+              mtry = mtry_to_use, ntree = ntree_to_use) 
+
+               Type of random forest: regression
+                     Number of trees: 500
+No. of variables tried at each split: 2
+
+          Mean of squared residuals: 31038.37
+                    % Var explained: 38.37
