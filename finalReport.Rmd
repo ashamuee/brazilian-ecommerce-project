@@ -412,6 +412,8 @@ Use target encoding for categorical variables
 Use preprocess for scaling data against training data set. Then use mean, sd from this trained data for test data.
 
 
+Combine segregated data sets
+- create derived info i.e. distance between two points
 
 Derived data set should be generated later on observations
 - geolocation usage to capture distance
@@ -521,6 +523,10 @@ cor(training_dataset$price,training_dataset$number_of_hours)
 
 Price Group for a product does not give any clear indication. It does not seem to be impacting delivery time of product.
 
+```{r smooth fit for price, echo=FALSE}
+training_dataset %>% ggplot(aes(x=price,y=number_of_hours)) + geom_smooth() 
+```
+
 ## Explore distance relationship between two points with number_of_hours
 
 ```{r Explore distance relationship between two points with number_of_hours, echo = FALSE}
@@ -553,7 +559,7 @@ training_dataset %>% ggplot(aes(x=freight_value,y=number_of_hours)) + geom_smoot
 
 ```{r Explore volume of product group with number_of_hours, echo=FALSE}
 # let's plot errorbar for number of hours vs volume of product group
-training_dataset %>% mutate(volume_group=round(volume/1000)+1) %>% mutate(volume_group=as.factor(volume_group)) %>% group_by(volume_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=volume_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
+training_dataset %>% mutate(volume_group=round(volume/5000)+1) %>% mutate(volume_group=as.factor(volume_group)) %>% group_by(volume_group) %>% summarise(mean=mean(number_of_hours),se=sd(number_of_hours)/sqrt(n())) %>% ggplot(aes(x=volume_group,y=mean,ymax=mean+2*se,ymin=mean-2*se)) + geom_point()+geom_errorbar() + theme(axis.text.x = element_text(angle=90))
 ```
 It does not influencee much the number of hours
 
@@ -591,10 +597,127 @@ test_subset <- test_subset %>% left_join(penalty_data,by='seller_id') %>% select
 
 ==TODO note penalty data should be calculated again if train_subset is changed. Only trained data should be used for test, so that there is no data leak.
 
+== TODO additive smoothing/Bayes estimator with target encoding
 
 ```{r Dataframe to store target encoding weights, include=FALSE}
 target_encoding_weights <- data.frame(effect=character(0),weight=double(0)) 
 ```
+
+
+```{r Apply Target encoding for product_category_name, echo = FALSE}
+#TODO you may need to remove customer_state and seller_state from dataset train_subset_for_encoding before proceeding further.
+
+  train_subset_for_encoding <- train_subset[1:30000,] %>% select(-seller_id,-customer_loc, -customer_zip_code_prefix, -customer_state)
+
+  global_mean <- mean(train_subset_for_encoding$number_of_hours)
+
+  set.seed(1,sample.kind='Rounding')
+  test_weight_indices <- createDataPartition(train_subset_for_encoding$number_of_hours,p=0.2,times=3,list=FALSE)
+  
+  weights <- seq(0,10,5)
+  
+  weight_to_use_per_partition <- sapply(1:3, function(index) {
+  #lambda_data_set <- prepare_lambda_data_set(index)
+  #train_lambda_set <- lambda_data_set[[1]]
+  #test_lambda_set <- lambda_data_set[[2]]  
+  train_weight_set <- train_subset_for_encoding[-test_weight_indices[,index],]
+  test_weight_set <- train_subset_for_encoding[test_weight_indices[,index],]
+  
+  test_weight_set <- test_weight_set %>%
+    semi_join(train_weight_set,by='product_category_name')
+  
+  weight_rmses <- sapply(weights, function(weight) {
+      product_category_effects <- train_weight_set %>% 
+        group_by(product_category_name) %>% 
+        summarise(mean=mean(number_of_hours),n=n()) %>%
+        mutate(mean=(n*mean+weight*global_mean)/(n+weight)) %>% 
+        select(-n) %>% rename()
+      
+      train_weight_set <- train_weight_set %>% left_join(product_category_effects,by='product_category_name') %>% rename(product_category_effect=mean) %>% select(-product_category_name)
+      
+      test_weight_set <- test_weight_set %>% left_join(product_category_effects,by='product_category_name') %>% rename(product_category_effect=mean) %>% select(-product_category_name)
+      
+      set.seed(seed=1,sample.kind = 'Rounding')
+      preProcessScalingValues <- preProcess(train_weight_set %>% select(-number_of_hours), method = c("center", "scale"))
+      
+      scaled_train_subset <- predict(preProcessScalingValues, train_weight_set)
+      scaled_test_subset <- predict(preProcessScalingValues, test_weight_set)
+      
+      # TODO remove below scaling was erroneous. train scaling needs to be used for test data
+      # below is just demo of how to use scale
+      # scaled_train_subset <- train_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale)) 
+      # scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
+      
+      # TODO can we skip modelling while evaluating weight to use or for target encoding?
+      
+      tuningControl=trainControl(method = "cv", number = 3, p = .8)
+      knn_fit_for_weight <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(27,34,41)),trControl=tuningControl)
+      
+      knn_fit_for_weight
+      print(knn_fit_for_weight)
+      
+      predictions <- predict(knn_fit_for_weight,scaled_test_subset %>% select(-number_of_hours))
+
+      RMSE(scaled_test_subset$number_of_hours,predictions) 
+  })
+  
+  # selecting weight leading to lowest RMSE
+  weight_to_use <- weights[which.min(weight_rmses)]
+  paste('Weight to use: ', weight_to_use, ', corresponding RMSE: ', weight_rmses[which.min(weight_rmses)])
+
+  print(weight_rmses)
+  weight_to_use
+})
+
+weight_to_use_per_partition
+
+weight_to_use <- mean(weight_to_use_per_partition)  
+# 3
+
+target_encoding_weights <- target_encoding_weights %>% add_row(effect='product_category',weight=weight_to_use)
+```
+
+```{r Post regularization for product_category effect, echo=FALSE}
+
+# prepare product_category_effect based on regularisation weight we have identified
+  global_mean <- mean(train_subset$number_of_hours)
+
+  set.seed(1,sample.kind='Rounding')
+  test_weight_indices <- createDataPartition(train_subset$number_of_hours,p=0.2,times=10,list=FALSE)
+
+product_category_effects_list <- lapply(1:10, function(index) {
+    train_weight_set <- train_subset[-test_weight_indices[,index],]
+
+    product_category_effects <- train_weight_set %>% 
+      group_by(product_category_name) %>%
+      summarise(mean=mean(number_of_hours),n=n()) %>%
+      mutate(mean=(n*mean+weight_to_use*global_mean)/(n+weight_to_use)) %>% 
+      select(-n) %>% rename()
+    
+    product_category_effects
+  }
+)
+
+pce <- product_category_effects_list[[1]]
+for (index in 2:10) {
+   pce <- pce %>% full_join(product_category_effects_list[[index]],by='product_category_name', suffix=c("1",index))
+}
+
+# wherever value is NA, we have used global mean
+pce <- pce %>% mutate(across(-product_category_name,~if_else(is.na(.x),global_mean,.x)))
+
+# as different partitions may not have exactly same data set combined the results
+product_category_effects <- tibble(pce[,1], product_category_effect=rowMeans(pce[,-1],na.rm = TRUE))
+
+train_subset <- train_subset %>% left_join(product_category_effects,by='product_category_name') %>% select(-product_category_name) %>% mutate(product_category_effect=if_else(is.na(product_category_effect),global_mean,product_category_effect))
+      
+test_subset <- test_subset %>% left_join(product_category_effects,by='product_category_name') %>% select(-product_category_name)
+```
+
+
+
+
+
 
 ```{r Apply Target encoding for seller_id, echo = FALSE}
 #TODO you may need to remove customer_state and seller_state from dataset train_subset_for_encoding before proceeding further.
@@ -675,9 +798,9 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='seller_id
   global_mean <- mean(train_subset$number_of_hours)
 
   set.seed(1,sample.kind='Rounding')
-  test_weight_indices <- createDataPartition(train_subset$number_of_hours,p=0.2,times=5,list=FALSE)
+  test_weight_indices <- createDataPartition(train_subset$number_of_hours,p=0.2,times=10,list=FALSE)
 
-seller_id_effects_list <- lapply(1:5, function(index) {
+seller_id_effects_list <- lapply(1:10, function(index) {
     train_weight_set <- train_subset[-test_weight_indices[,index],]
 
     seller_id_effects <- train_weight_set %>% 
@@ -691,19 +814,19 @@ seller_id_effects_list <- lapply(1:5, function(index) {
 )
 
 sie <- seller_id_effects_list[[1]]
-for (index in 2:5) {
+for (index in 2:10) {
    sie <- sie %>% full_join(seller_id_effects_list[[index]],by='seller_id', suffix=c("1",index))
 }
 
-# whereever value is NA, we have used global mean
+# wherever value is NA, we have used global mean
 sie <- sie %>% mutate(across(-seller_id,~if_else(is.na(.x),global_mean,.x)))
 
 # as different partitions may not have exactly same data set combined the results
 seller_id_effects <- tibble(sie[,1], seller_id_effect=rowMeans(sie[,-1],na.rm = TRUE))
 
-train_subset <- train_subset %>% left_join(seller_id_effects,by='seller_id') %>% select(-product_category_name,-seller_id) %>% mutate(seller_id_effect=if_else(is.na(seller_id_effect),global_mean,seller_id_effect))
+train_subset <- train_subset %>% left_join(seller_id_effects,by='seller_id') %>% select(-seller_id) %>% mutate(seller_id_effect=if_else(is.na(seller_id_effect),global_mean,seller_id_effect))
       
-test_subset <- test_subset %>% left_join(seller_id_effects,by='seller_id') %>% select(-product_category_name,-seller_id)
+test_subset <- test_subset %>% left_join(seller_id_effects,by='seller_id') %>% select(-seller_id)
 ```
 
 
@@ -785,9 +908,9 @@ target_encoding_weights <- target_encoding_weights %>% add_row(effect='customer_
   global_mean <- mean(train_subset$number_of_hours)
 
   set.seed(1,sample.kind='Rounding')
-  test_weight_indices <- createDataPartition(train_subset$number_of_hours,p=0.2,times=5,list=FALSE)
+  test_weight_indices <- createDataPartition(train_subset$number_of_hours,p=0.2,times=10,list=FALSE)
 
-customer_state_effects_list <- lapply(1:5, function(index) {
+customer_state_effects_list <- lapply(1:10, function(index) {
     train_weight_set <- train_subset[-test_weight_indices[,index],]
 
     customer_state_effects <- train_weight_set %>% 
@@ -801,11 +924,11 @@ customer_state_effects_list <- lapply(1:5, function(index) {
 )
 
 cse <- customer_state_effects_list[[1]]
-for (index in 2:5) {
+for (index in 2:10) {
    cse <- cse %>% full_join(customer_state_effects_list[[index]],by='customer_state', suffix=c("1",index))
 }
 
-# whereever value is NA, we have used global mean
+# wherever value is NA, we have used global mean
 cse <- cse %>% mutate(across(-customer_state,~if_else(is.na(.x),global_mean,.x)))
 
 # as different partitions may not have exactly same data set combined the results
@@ -945,22 +1068,22 @@ scaled_test_subset <- predict(preProcessScalingValues, test_subset)
 # scaled_test_subset <- test_subset %>% mutate(across(c(mean_delay_in_handover,distance_between_two_points,volume,product_weight_g,freight_value,price),scale))
 
 
-tuningControl=trainControl(method = "cv", number = 3, p = .8)
-knn_fit <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(27,34,41)),trControl=tuningControl)
+tuningControl=trainControl(method = "cv", number = 5, p = .8)
+knn_fit <- train(number_of_hours~., scaled_train_subset, method='knn',tuneGrid=data.frame(k=c(56,63,70,77)),trControl=tuningControl)
 
 knn_fit
 
 predictions <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
 
 RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
-#184.7906 for k=34.
+#183.2447 for k=70
 
 save(knn_fit,file='rda/knn_model.rda')
 ```
 
 
 ```{r correlation, eval=FALSE}
-cor(train_subset %>% select(price,freight_value,customer_loc_effect,customer_state_effect,seller_id_effect,distance_between_two_points,mean_delay_in_handover,volume,number_of_hours,product_weight_g),use="pairwise.complete.obs") %>% knitr::kable()
+cor(train_subset %>% select(price,freight_value,product_category_effect,customer_loc_effect,customer_state_effect,seller_id_effect,distance_between_two_points,mean_delay_in_handover,volume,number_of_hours,product_weight_g),use="pairwise.complete.obs") %>% knitr::kable()
 ```
 
 Random forest
@@ -971,7 +1094,7 @@ From : https://towardsdatascience.com/a-limitation-of-random-forest-regression-d
 ```{r rf model, echo = FALSE}
 set.seed(seed=1,sample.kind = 'Rounding')
 tuningControl=trainControl(method = "cv", number = 2, p = .8)
-rf_fit <- train(number_of_hours~., train_subset, method='rf',tuneGrid = data.frame(mtry = seq(5, 40, 10)),trControl=tuningControl,ntree=250)
+rf_fit <- train(number_of_hours~., train_subset, method='rf',tuneGrid = data.frame(mtry = c(1,2,3,4,5,10)),trControl=tuningControl,ntree=250)
 #rf_fit <- train(number_of_hours~., train_subset %>% select(-seller_state), method='rf',tuneGrid = data.frame(mtry = seq(5, 50, 10)),trControl=tuningControl,ntree=250) # nodesize = 50,maxnodes=2000,ntree=200
 
 rf_fit
@@ -979,7 +1102,7 @@ rf_fit
 predictions <- predict(rf_fit,test_subset %>% select(-number_of_hours))
 
 RMSE(predictions,(test_subset %>% pull(number_of_hours) ))
-# 175.0988 for mtry 15. Technically there are total of 82 variables due to 73 product categories and 9 other predictors. The seller_state was not of much help. it was actually increasing RMSE by .6. So have ignored it.
+# 173.9907 for mtry 2. Technically there are total of 10 predictors. The seller_state was not of much help. it was actually increasing RMSE. So have ignored it.
 
 save(rf_fit,file='rda/rf_model.rda')
 ```
@@ -1000,9 +1123,47 @@ gam_fit
 predictions <- predict(gam_fit,scaled_test_subset %>% select(-number_of_hours))
 
 RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
-# 185.1074 uses GCV.Cp method and select=FALSE
+# 183.4923 uses GCV.Cp method and select=TRUE
 
 save(gam_fit,file='rda/gam_model.rda')
+```
+
+
+```{r Prepare product_category effect based on target encoding, include = FALSE}
+# prepare product_category_effect based on regularisation weight we have identified
+prepare_product_category_effect <- function(train_df, weight_to_use) {
+  global_mean <- mean(train_df$number_of_hours)
+
+  set.seed(1,sample.kind='Rounding')
+  test_weight_indices <- createDataPartition(train_df$number_of_hours,p=0.2,times=10,list=FALSE)
+
+  product_category_effects_list <- lapply(1:10, function(index) {
+      train_weight_set <- train_df[-test_weight_indices[,index],]
+  
+      product_category_effects <- train_weight_set %>% 
+        group_by(product_category_name) %>%
+        summarise(mean=mean(number_of_hours),n=n()) %>%
+        mutate(mean=(n*mean+weight_to_use*global_mean)/(n+weight_to_use)) %>% 
+        select(-n) %>% rename()
+      
+      product_category_effects
+    }
+  )
+
+  pce <- product_category_effects_list[[1]]
+  for (index in 2:10) {
+     pce <- pce %>% full_join(product_category_effects_list[[index]],by='product_category_name', suffix=c("1",index))
+  }
+
+  # wherever value is NA, we have used global mean
+  pce <- pce %>% mutate(across(-product_category_name,~if_else(is.na(.x),global_mean,.x)))
+  
+  # as different partitions may not have exactly same data set combined the results
+  product_category_effects <- tibble(pce[,1], product_category_effect=rowMeans(pce[,-1],na.rm = TRUE))
+  
+  #product_category effects are ready
+  product_category_effects
+}
 ```
 
 
@@ -1121,6 +1282,23 @@ prepare_customer_loc_effect <- function(train_df, weight_to_use) {
 
 
 
+```{r Enhance training and test dataset for product_category effect based on target encoding, include = FALSE}
+enhance_datasets_using_product_category_effect <- function(product_category_effects,train_df,test_df,cleanup) {
+  #we will use seller id effects computed using training data in test data.
+  train_df <- train_df %>% left_join(product_category_effects,by='product_category_name') %>% mutate(product_category_effect=if_else(is.na(product_category_effect),global_mean,product_category_effect))
+        
+  test_df <- test_df %>% left_join(product_category_effects,by='product_category_name')
+  
+  # cleanup
+  if (cleanup) {
+    train_df <- train_df %>% select(-product_category_name)
+    test_df <- test_df %>% select(-product_category_name)
+  }
+  
+  list(train_df,test_df)
+}
+```
+
 
 ```{r Enhance training and test dataset for seller_id effect based on target encoding, include = FALSE}
 enhance_datasets_using_seller_id_effect <- function(seller_id_effects,train_df,test_df,cleanup) {
@@ -1131,8 +1309,8 @@ enhance_datasets_using_seller_id_effect <- function(seller_id_effects,train_df,t
   
   # cleanup
   if (cleanup) {
-    train_df <- train_df %>% select(-product_category_name,-seller_id)
-    test_df <- test_df %>% select(-product_category_name,-seller_id)
+    train_df <- train_df %>% select(-seller_id)
+    test_df <- test_df %>% select(-seller_id)
   }
   
   list(train_df,test_df)
@@ -1194,6 +1372,15 @@ prepare_data_for_training_testing <- function(train_ds, test_ds, cleanup) {
     train_ds <- train_ds %>% select(-handed_over_to_carrier_date,-shipping_limit_date)
     test_ds <- test_ds %>% select(-handed_over_to_carrier_date,-shipping_limit_date)
   }
+  
+  print('Enhancing data for product category effects')
+  weight_to_use <- target_encoding_weights %>% 
+    filter(effect=='product_category') %>% 
+    pull(weight)
+  product_category_effects <- prepare_product_category_effect(train_ds,weight_to_use)
+  dataset_list <- enhance_datasets_using_product_category_effect(product_category_effects,train_ds,test_ds,cleanup)
+  train_ds <- dataset_list[[1]]
+  test_ds <- dataset_list[[2]]
 
   print('Enhancing data for seller id effects')
   weight_to_use <- target_encoding_weights %>% filter(effect=='seller_id') %>% pull(weight)
@@ -1231,17 +1418,11 @@ dataset_list <- prepare_data_for_training_testing(training_dataset,validation_da
 training_dataset <- dataset_list[[1]]
 validation_dataset <- dataset_list[[2]]
 
-validation_dataset <- validation_dataset %>%
-  semi_join(training_dataset,by='product_category_name') %>% 
-  semi_join(training_dataset,by='seller_id') %>% 
-  semi_join(training_dataset,by='customer_state') %>%
-  semi_join(training_dataset,by='customer_loc')
-
 # cleanup
 training_dataset <- training_dataset %>%
-  select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix)
+  select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix,-order_purchase_timestamp,-payment_approved_at)
 validation_dataset <- validation_dataset %>%
-  select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix)
+  select(-handed_over_to_carrier_date,-shipping_limit_date,-product_category_name,-seller_id,-customer_state,-customer_loc,-customer_zip_code_prefix,-order_purchase_timestamp,-payment_approved_at)
 ```
 
 
@@ -1265,10 +1446,36 @@ save(final_model,file='rda/final_model.rda')
 predictions <- predict(final_model,validation_dataset %>% select(-number_of_hours))
 
 RMSE((validation_dataset %>% pull(number_of_hours) ),predictions)
-# 190.184 for mtry=15, ntree=500
+# 189.2705 for mtry=2, ntree=500
+```
+
+```{r Final model analysis, echo=FALSE}
+validation_dataset %>% select(number_of_hours) %>% mutate(diff=(number_of_hours-predictions)) %>% ggplot(aes(diff)) + geom_histogram(binwidth = 1) + scale_x_log10()
+
+validation_dataset %>% select(number_of_hours) %>% mutate(diff=number_of_hours-predictions) %>% summary()
+
 ```
 
 
+
+```{r Final knn model traing with data scaled, echo=FALSE}
+set.seed(seed=1,sample.kind = 'Rounding')
+preProcessScalingValues <- preProcess(training_dataset %>% select(-number_of_hours), method = c("center", "scale"))
+
+scaled_train_subset <- predict(preProcessScalingValues, training_dataset) 
+scaled_test_subset <- predict(preProcessScalingValues, validation_dataset) 
+
+final_knn_fit <- knnreg(number_of_hours~., scaled_train_subset,k = knn_fit$finalModel$k)
+
+final_knn_fit
+
+predictions <- predict(final_knn_fit,scaled_test_subset %>% select(-number_of_hours))
+
+RMSE(predictions,(scaled_test_subset %>% pull(number_of_hours) ))
+# 203.0848
+
+save(final_knn_fit,file='rda/final_knn_fit.rda')
+```
 
 
 
