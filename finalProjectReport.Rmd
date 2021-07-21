@@ -1,9 +1,12 @@
 ---
 title: "CYO Project Report - Delivery Prediction System"
 author: "Asham Vohra"
-date: "6/21/2021"
+date: "21st June 2021"
 output:
-  pdf_document: default
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
   html_document:
     df_print: paged
 urlcolor: blue
@@ -12,6 +15,8 @@ urlcolor: blue
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+\newpage
 
 # Overview
 Prediction systems play a crucial role in the modern world. With advent of technology and availability of data, these systems are being leveraged by retail chains, banks, colleges among other businesses. Depending on the use case, these systems are used to estimate delivery time, sales figures, carry out inventory management, predict occurrence of a disease etc. 
@@ -101,7 +106,7 @@ products_dataset %>% head(2) %>% as.matrix()  %>% t() %>%
 
 The data set here had orders details like order id, associated customer, order status, purchase time, when was the order handed over to carrier, when was it delivered to customer and estimated delivery date and few other attributes.
 
-This was a crucial dataset not only for us to build our delivery estimation system but to even identify the current performance metric i.e. RMSE for the approach Olist was using.
+This was a crucial dataset not only for us to build our delivery prediction system but to even identify the current performance metric i.e. RMSE for the approach Olist was using.
 
 In order to leverage this dataset properly, we carried out below steps:
 
@@ -156,9 +161,9 @@ In order to leverage this dataset properly, we carried out below steps:
 ```{r Data wrangling-order items data set, include=FALSE, echo=FALSE}
 # orders data with item related seller info
 # order_item_id --->sequential number identifying number of items included in the same order.
-# so if there are three items they will be nuber 1 , 2, 3 for the given order
+# so if there are three items they will be numbered 1 , 2, 3 for the given order
 # shipping_limit_date ---> Shows the seller shipping limit date for handling the order over to the logistic partner.
-# freight_value --> item freight value item (if an order has more than one item the freight value is splitted between items)
+# freight_value --> item freight value item (if an order has more than one item the freight value is split between items)
 order_items_dataset <- read.csv(file.path('data','olist_order_items_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(shipping_limit_date=as_datetime(shipping_limit_date))  %>% select(-order_item_id)
 
 # check how they are structured
@@ -1143,7 +1148,7 @@ To solve these, we identified the smoothing factor(or weight) to use by carrying
 
 Once weight was identified, to avoid any randomness due to choice of the dataset, we computed additive smoothing based target encoding for product category attribute across 10 datasets and then took a mean for them to settle at the final target encoded values to use for the concerned feature.
 
-For the above analysis, knn model was used, given that it does not make assumptions about the dataset, which was useful in the early phase of analysis. However, to use knn model, we **scaled and normalized** the features as knn model uses Euclidean distance. Scaling and normalization was carried our using training data and then used for test data.
+For the above analysis, k-nearest neighbors(knn) model was used, given that it does not make assumptions about the dataset, which was useful in the early phase of analysis. However, to use knn model, we **scaled and normalized** the features as knn model uses Euclidean distance. Scaling and normalization was carried our using training data and then used for test data.
 
 ```{r Apply Target encoding for product_category_name, include = FALSE, eval=FALSE}
 #TODO marked eval=FALSE to help generate report quickly
@@ -1611,7 +1616,7 @@ k-nearest neighbors(knn) relies on finding nearest neighbors and uses average of
 
 To use knn model, features were scaled and normalized to prevent bias towards any features, as knn internally calculates Euclidean distance for finding the nearest data-points. 
 
-In addition, for knn model training and tuning, we carried our 5-fold cross validation providing a range of values of k to use for training the model. Here, k means number of neighbors to be considered. The cross validation helped in removing any randomness from our tuning parameters. In addition, this helped reduce the probability of overfitting.
+In addition, for knn model training and tuning, we carried our 5-fold cross validation providing a range of values of **k** to use for training the model. Here, k means number of neighbors to be considered. The cross validation helped in removing any randomness from our tuning parameters. In addition, this helped reduce the probability of overfitting.
 
 ```{r knn model data scaled under test, include=FALSE, eval=FALSE}
 ## TODO make echo=FALSE 
@@ -1649,7 +1654,7 @@ if(file.exists('rda/knn_model.rda')) {
 }
 ```
 
-Based on model results, k value of `r if(exists("knn_fit",mode="list")) { knn_fit$finalModel$k } else {77}` was identified to be the one with lowest RMSE.
+Based on model results, **k** value of **`r if(exists("knn_fit",mode="list")) { knn_fit$finalModel$k } else {77}`** was identified to be the one with lowest RMSE.
 
 ```{r trained knn model validation, include=FALSE, eval=FALSE}
 predictions <- predict(knn_fit,scaled_test_subset %>% select(-number_of_hours))
@@ -1678,7 +1683,7 @@ Next, we used Random forest model, which is basically ensemble of multiple decis
 
 The ensemble of multiple decision trees helps prevent overfitting and creates a more stable prediction. While, the number of random features at each node of decision tree to determine best split, helps reduce bias and variance in the model. It is these qualities of random forest, which prompted us to consider this for model development and evaluation.
 
-To train and tune random forest model, we carried our 4-fold cross validation providing a range of values of mtry to use for training the model. Here, mtry means number of random features used to determine the best split at each node of the decision tree. In addition, we configured the number of decision trees to create as 200. Here, the cross validation not only helped to reduce the probability of overfitting but also helped in identifying the tuning parameter i.e. mtry which would work across randomly selected datasets. 
+To train and tune random forest model, we carried our 4-fold cross validation providing a range of values of mtry to use for training the model. Here, **mtry** means number of random features used to determine the best split at each node of the decision tree. In addition, we configured the number of decision trees to create as **200**. Here, the cross validation not only helped to reduce the probability of overfitting but also helped in identifying the tuning parameter i.e. mtry which would work across randomly selected datasets. 
 
 ```{r rf model, include= FALSE, eval = FALSE}
 # TODO make it echo=FALSE
@@ -1721,7 +1726,7 @@ performance_metric
 # 173.3481 for mtry 2. There are total of 11 predictors.
 ```
 
-Based on model results, mtry value of `r if(exists("rf_fit",mode="list")) { rf_fit$finalModel$mtry } else {2}` was identified to be the one with lowest RMSE.
+Based on model results, **mtry** value of **`r if(exists("rf_fit",mode="list")) { rf_fit$finalModel$mtry } else {2}`** was identified to be the one with lowest RMSE.
 
 Below is the summary of each model and random forest model(which used partial dataset) against the performance metric i.e. RMSE
 
@@ -1794,7 +1799,7 @@ data.frame(weight_for_knn_pred=weights_for_ensemble_model,rmse=rmses_weighted_en
   xlab('Weight used(for knn prediction)') + ylab('Resultant RMSE')
 ```
 
-We noted that weighted ensemble model had lowest RMSE of `r min(rmses_weighted_ensemble_model)` at weight=`r weights_for_ensemble_model[which.min(rmses_weighted_ensemble_model)]`
+We noted that weighted ensemble model had lowest RMSE of **`r min(rmses_weighted_ensemble_model)`** at weight=**`r weights_for_ensemble_model[which.min(rmses_weighted_ensemble_model)]`**
 
 In addition, other ensembling techniques like stacking were explored, however they could not improve the RMSE.
 

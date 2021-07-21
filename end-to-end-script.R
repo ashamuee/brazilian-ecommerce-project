@@ -90,7 +90,7 @@ orders_dataset %>% head(2) %>% as.matrix() %>% t() %>%
 # order_item_id --->sequential number identifying number of items included in the same order.
 # so if there are three items they will be numbered 1 , 2, 3 for the given order
 # shipping_limit_date ---> Shows the seller shipping limit date for handling the order over to the logistic partner.
-# freight_value --> item freight value item (if an order has more than one item the freight value is splitted between items)
+# freight_value --> item freight value item (if an order has more than one item the freight value is split between items)
 order_items_dataset <- read.csv(file.path('data','olist_order_items_dataset.csv'),header=TRUE,stringsAsFactors = FALSE) %>% mutate(shipping_limit_date=as_datetime(shipping_limit_date))  %>% select(-order_item_id)
 
 # check how they are structured
@@ -920,7 +920,7 @@ training_dataset %>% group_by(product_category_name) %>%
 
 
 # Apply Target encoding for product_category_name
-# here we will try to identify the regularization weight to use by carrying out target encoding 
+# here we will try to identify the regularization weight/smoothing factor to use by carrying out target encoding 
 # for different datasets set of weights, selecting single weight per dataset based on 
 # performance metric i.e. RMSE and then we will take a mean of weights identified across the datasets.
 train_subset_for_encoding <- train_subset[1:40000,] %>% select(-customer_loc, -customer_state)
@@ -1007,6 +1007,7 @@ training_dataset %>% group_by(seller_id) %>%
   ylab('Avg number of hours')
 
 # Apply Target encoding for seller_id
+# here we will try to identify the regularization weight/smoothing factor to use by carrying out target encoding
 train_subset_for_encoding <- train_subset[1:40000,] %>% select(-customer_loc, -customer_state)
 
 global_mean <- mean(train_subset_for_encoding$number_of_hours)
@@ -1098,6 +1099,7 @@ training_dataset %>% group_by(customer_state) %>%
   xlab('Customer States') + ylab('Avg number of hours')
 
 # Apply Target encoding for customer_state
+# here we will try to identify the regularization weight/smoothing factor to use by carrying out target encoding 
 train_subset_for_encoding <- train_subset[1:40000,] %>% select(-customer_loc)
 global_mean <- mean(train_subset_for_encoding$number_of_hours)
 
@@ -1199,6 +1201,7 @@ training_dataset %>% group_by(customer_loc) %>%
   xlab('Customer Locations') + ylab('Avg number of hours')
 
 # Apply Target encoding for customer_loc
+# here we will try to identify the regularization weight/smoothing factor to use by carrying out target encoding 
 train_subset_for_encoding <- train_subset[1:40000,]
 global_mean <- mean(train_subset_for_encoding$number_of_hours)
 
