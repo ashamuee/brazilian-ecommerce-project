@@ -320,7 +320,7 @@ wrangled_data <- raw_data %>%
   select(-order_delivered_customer_date,-order_estimated_delivery_date)
 ```
 
-Having wrangled the datasets individually we combined them into a single dataset. While the dataset had many attributes, based on their frequency and our intuition shared earlier we zeroed on the below fields for further consideration. In addition, it is important to note that for model development we created outcome column number_of_hours based on existing fields i.e. order_delivered_customer_date and order_purchase_timestamp as this is what we would want to predict whenever we get a new order i.e. given this order, how many number of hours are required to deliver the product to the customer.
+Having wrangled the datasets individually we combined them into a single dataset. While the dataset had many attributes, based on their frequency and our intuition shared earlier we zeroed on the below fields for further consideration. In addition, it is important to note that for model development we created outcome column number_of_hours based on existing fields i.e. order_delivered_customer_date and order_purchase_timestamp as this is what we would want to predict whenever we get a new order i.e. given this order, how many number of hours are required to deliver the ordered product to the customer.
 
 The wrangled dataset after incorporating various datasets available to us looked like below:
 ```{r Final wrangled data,echo=FALSE}
@@ -1557,12 +1557,12 @@ load('rda/target_encoding_weights.rda')
 #### Price feature
 We looked into the intuition that order item's price could influence the delivery timelines as expensive items ordered may have priority shipping or be delivered with caution. 
 
-To understand its influence on the delivery timelines, we plotted numbers of hours taken for delivery against the price of the ordered item. In order to see the trend, gam method based smoothing curve was plotted on the graph.
+To understand its influence on the delivery timelines, we plotted numbers of hours taken for delivery against the price of the ordered product. In order to see the trend, gam method based smoothing curve was plotted on the graph.
 
 ```{r Explore price relation with number_of_hours, echo=FALSE, message=FALSE}
-training_dataset  %>% ggplot(aes(price,number_of_hours)) + geom_smooth() + xlab('Price of ordered item') + ylab('Number of hours taken for delivery')
+training_dataset  %>% ggplot(aes(price,number_of_hours)) + geom_smooth() + xlab('Price of ordered product') + ylab('Number of hours taken for delivery')
 ```
-In above plot, we noted that number of hours taken for delivery vary as the price of the ordered item changes. It appeared to increase significantly as the price of ordered item increased and decreased when the price reached towards higher limits. Though confidence interval indicated higher variability in delivery timelines at higher prices.
+In above plot, we noted that number of hours taken for delivery vary as the price of the ordered product changes. It appeared to increase significantly as the price of ordered product increased and decreased when the price reached towards higher limits. Though confidence interval indicated higher variability in delivery timelines at higher prices.
 
 This behavior could be useful in estimating delivery timelines. We decided to consider this as a feature for further analysis for inclusion in the model.
 
@@ -1612,7 +1612,7 @@ The derived features selected earlier were prepared based on train_subset and ap
 In addition, as earlier shared, categorical features were converted to numeric form with the help of additive smoothing based target encoding with a smoothing factor/weight term computed earlier to avoid overfitting. Also, any undesired features were removed, reducing train_subset and test_subset to only the desired features.
 
 ### k-nearest neighbors(knn) model
-k-nearest neighbors(knn) relies on finding nearest neighbors and uses average of the nearest neigbbors for prediction. In addition, it does not make assumptions about the dataset. In our case limited dataset and that the alogrithm does not make any assumptions, made it a good candidate for model development and performance evaluation. 
+k-nearest neighbors(knn) relies on finding nearest neighbors and uses average of the nearest neigbbors for prediction. In addition, it does not make assumptions about the dataset. In our case limited dataset and that the algorithm does not make any assumptions, made it a good candidate for model development and performance evaluation. 
 
 To use knn model, features were scaled and normalized to prevent bias towards any features, as knn internally calculates Euclidean distance for finding the nearest data-points. 
 
@@ -1897,14 +1897,14 @@ Below is the summary of models against the performance metric i.e. RMSE
 performance_metric %>% knitr::kable(caption='Performance Metric(RMSE) Summary')
 ```
 
-For the **final model**, the performance metric i.e. RMSE = **`r performance_metric %>% filter(type=='Final model') %>% pull(value)`** captured against **validation_dataset** was much better than what Olist store had as identified from the dataset. The newly built model can be used for predicting number of hours required for delivery of a given ordered item.
+For the **final model**, the performance metric i.e. RMSE = **`r performance_metric %>% filter(type=='Final model') %>% pull(value)`** captured against **validation_dataset** was much better than what Olist store had as identified from the dataset. The newly built model can be used for predicting number of hours required for delivery of a given ordered product.
 
 # Conclusion
-As part of this project, the goal was to build a delivery prediction system which could predict the number of hours required to delivered the ordered item rating with minimal RMSE. 
+As part of this project, the goal was to build a delivery prediction system which could predict the number of hours required to delivered the ordered product rating with minimal RMSE. 
 
 During the course of project, we carried out data cleaning, identified features and derived features from existing information available. In addition, converted categorical features to numeric form and applied various techniques like additive smoothing based target encoding, scaling and normalization as required. 
 
-Once the feature analysis and selection was completed, we used the features to tune models like k-nearest neighbors, random forest. We carried out k-fold cross validation to remove any randomness from the model training and tuning process. This additionally helped to reduce probability of overfitting. Post this, we explored multiple ensemble models using techniques like averaging, weighted average, stacking, among others. Finally we selected random forest based model and the model so trained performs within desired range of RMSE and can be useful for predicting number of hours required for delivery of a given ordered item. Due care was taken to prevent overfitting from influencing our model.
+Once the feature analysis and selection was completed, we used the features to tune models like k-nearest neighbors, random forest. We carried out k-fold cross validation to remove any randomness from the model training and tuning process. This additionally helped to reduce probability of overfitting. Post this, we explored multiple ensemble models using techniques like averaging, weighted average, stacking, among others. Finally we selected random forest based model and the model so trained performs within desired range of RMSE and can be useful for predicting number of hours required for delivery of a given ordered product. Due care was taken to prevent overfitting from influencing our model.
 
 While the model is a significant improvement over what Olist store had, there is lot of room to improve it. It can be improved for incremental learning so that it can learn from new orders and their delivery details once they become available. In addition, it could be improved to handle new sellers or product categories.
 
